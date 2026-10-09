@@ -1,0 +1,14 @@
+{
+  "name": "mysoul-order-analytics",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Order analytics for the MySoul Shopify order sheet (Step 1 of 4)",
+  "scripts": {
+    "install:all": "npm --prefix server install && npm --prefix client install",
+    "dev:server": "npm --prefix server run dev",
+    "dev:client": "npm --prefix client run dev",
+    "build": "npm --prefix client run build",
+    "start": "npm --prefix server start",
+    "test": "npm --prefix server test"
+  }
+}
