@@ -6,6 +6,7 @@ const Snapshot = mongoose.model('Snapshot', new Schema({
   tab: { type: String, unique: true }, // 'order' | 'master'
   rows: Schema.Types.Mixed,
   source: String,
+  hash: String, // fingerprint of rows: lets auto-sync skip re-cleaning when the sheet has not changed
   fetchedAt: Date,
 }));
 
@@ -31,6 +32,7 @@ const Order = mongoose.model('Order', new Schema({
   finalStatus: { type: String, index: true },
   notes: String, rtoReason: String,
   pincode: String, masterTags: String, // from OrdersMaster, used by Step 3
+  syncId: { type: String, index: true }, // which sync wrote this row (used for the no-gap swap)
   excluded: { type: String, default: null, index: true }, // null | noid | duplicate | test
   excludedReason: String, duplicateOf: Number,
   conflicts: [String],
@@ -38,15 +40,18 @@ const Order = mongoose.model('Order', new Schema({
   raw: [String],
 }, { minimize: false }));
 
-const SyncRun = mongoose.model('SyncRun', new Schema({
+const syncRunSchema = new Schema({
   at: { type: Date, default: Date.now },
+  changed: Boolean, // false = sheet checked, nothing new
   trigger: String, // manual | auto | upload | shopify-upload | settings
   source: String,
   ok: Boolean,
   error: String,
   summary: Schema.Types.Mixed,
   warnings: [String],
-}));
+});
+syncRunSchema.index({ at: 1 }, { expireAfterSeconds: 30 * 24 * 3600 }); // 96 runs a day: keep 30 days
+const SyncRun = mongoose.model('SyncRun', syncRunSchema);
 
 const Setting = mongoose.model('Setting', new Schema({
   key: { type: String, unique: true },

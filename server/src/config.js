@@ -14,5 +14,9 @@ module.exports = {
     saFile: env.GOOGLE_SERVICE_ACCOUNT_FILE || '',
     saJson: env.GOOGLE_SERVICE_ACCOUNT_JSON || '',
   },
-  syncIntervalMin: Number(env.SYNC_INTERVAL_MIN) || 0,
+  // Auto-sync is ON by default (every 15 min). Set SYNC_INTERVAL_MIN=0 to turn it off.
+  syncIntervalMin: env.SYNC_INTERVAL_MIN === undefined || env.SYNC_INTERVAL_MIN === '' ? 15 : Math.max(0, Number(env.SYNC_INTERVAL_MIN) || 0),
+  // Secret for the external trigger URL /api/cron/sync (cron-job.org, UptimeRobot, GitHub Actions).
+  cronSecret: env.CRON_SECRET || '',
+  cronMinAgeMin: Number(env.CRON_MIN_AGE_MIN) || 5,
 };

@@ -7,7 +7,8 @@ const { summarize, DEFAULT_REASON_MAP } = require('../lib/reasons');
 const { RAW_HEADERS } = require('../lib/clean');
 const { fmtDate, fmtDateTime } = require('../lib/istTime');
 const sync = require('../services/sync');
-const { parseCsv } = require('../services/sources');
+const { parseCsv, assertLooksLikeOrderSheet } = require('../services/sources');
+const { getSheetConfig, saveSheetConfig } = require('../services/sheetConfig');
 const cfg = require('../config');
 
 const router = express.Router();
@@ -30,21 +31,39 @@ const rangeOut = (w) => ({
 // ---------- sync ----------
 router.get('/sync/status', wrap(async (req, res) => {
   const last = await SyncRun.findOne().sort({ at: -1 }).lean();
-  const lastOk = await SyncRun.findOne({ ok: true }).sort({ at: -1 }).lean();
-  res.json({ last, lastOk, config: { source: cfg.sheet.source, sheetConfigured: !!cfg.sheet.id, autoSyncMin: cfg.syncIntervalMin, orderTab: cfg.sheet.orderTab } });
+  const lastCheck = await SyncRun.findOne({ ok: true }).sort({ at: -1 }).select('at changed trigger').lean(); // sheet reached, even if nothing new
+  const lastOk = await SyncRun.findOne({ ok: true, changed: { $ne: false } }).sort({ at: -1 }).lean();   // data actually updated
+  const lastWebhook = await SyncRun.findOne({ trigger: 'webhook' }).sort({ at: -1 }).select('at').lean(); // last signal from the sheet itself
+  const sc = await getSheetConfig();
+  res.json({
+    last, lastOk, lastCheck, lastWebhook,
+    config: { source: sc.source, sheetConfigured: !!sc.sheetId, autoSyncMin: cfg.syncIntervalMin, cronEnabled: !!cfg.cronSecret, orderTab: sc.orderTab },
+  });
 }));
-router.post('/sync', wrap(async (req, res) => res.json(await sync.syncFromSheet('manual'))));
+router.post('/sync', wrap(async (req, res) => res.json(await sync.syncFromSheet('manual', { force: true }))));
 router.post('/sync/reclean', wrap(async (req, res) => res.json(await sync.recleanOnly())));
 router.post('/sync/upload', upload.fields([{ name: 'orderSheet', maxCount: 1 }, { name: 'ordersMaster', maxCount: 1 }]), wrap(async (req, res) => {
   const f = req.files || {};
   if (!f.orderSheet && !f.ordersMaster) return res.status(400).json({ error: 'Attach orderSheet and/or ordersMaster CSV' });
   const rows = (file) => (file ? parseCsv(file[0].buffer.toString('utf8')) : null);
+  if (f.orderSheet) assertLooksLikeOrderSheet(rows(f.orderSheet));
   res.json(await sync.syncFromUpload({ orderRows: rows(f.orderSheet), masterRows: rows(f.ordersMaster) }));
 }));
 router.post('/sync/shopify-csv', upload.single('file'), wrap(async (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'Attach the Shopify orders CSV as "file"' });
   res.json(await sync.importShopifyExport(parseCsv(req.file.buffer.toString('utf8'))));
 }));
+
+// ---------- Google Sheet connection (set from the website) ----------
+router.get('/settings/sheet', wrap(async (req, res) => {
+  const sc = await getSheetConfig();
+  res.json({
+    connected: !!sc.sheetId, source: sc.source, fromEnv: !!sc.sheetId && !sc.fromUi,
+    link: sc.sheetId ? `https://docs.google.com/spreadsheets/d/${sc.sheetId}/edit${sc.orderGid ? `?gid=${sc.orderGid}` : ''}` : '',
+    orderTab: sc.orderTab, masterTab: sc.masterTab, masterGid: sc.masterGid,
+  });
+}));
+router.put('/settings/sheet', wrap(async (req, res) => { await saveSheetConfig(req.body || {}); res.json({ saved: true }); }));
 
 // ---------- metrics ----------
 router.get('/metrics', wrap(async (req, res) => {

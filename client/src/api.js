@@ -43,6 +43,15 @@ export function useApi(path, params, enabled = true) {
   const [state, setState] = useState({ data: null, error: null, loading: true });
   const key = JSON.stringify([path, params, enabled]);
   const [tick, setTick] = useState(0);
+  // When the server reports newly synced data, quietly refetch in the background (no "Loading…" flash).
+  useEffect(() => {
+    if (!enabled) return undefined;
+    let live = true;
+    const on = () => api.get(path, params).then((data) => live && setState({ data, error: null, loading: false }), () => {});
+    window.addEventListener('data-updated', on);
+    return () => { live = false; window.removeEventListener('data-updated', on); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [key]);
   useEffect(() => {
     if (!enabled) return undefined;
     let live = true;

@@ -34,11 +34,34 @@ function Login({ onDone }) {
 }
 
 function SyncNote() {
-  const { data } = useApi('/sync/status');
-  const last = data && data.lastOk;
+  const { data, reload } = useApi('/sync/status');
+  useEffect(() => { const t = setInterval(reload, 60000); return () => clearInterval(t); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  // Every 10 s ask whether new data arrived; if so, tell every open screen to refresh itself.
+  useEffect(() => {
+    let seen = null;
+    const poll = async () => {
+      if (document.hidden) return;
+      try {
+        const s = await api.get('/sync/status');
+        const at = s.lastOk && s.lastOk.at;
+        if (seen && at && at !== seen) window.dispatchEvent(new Event('data-updated'));
+        if (at) seen = at;
+      } catch (e) { /* offline or locked: try again next tick */ }
+    };
+    poll();
+    const t = setInterval(poll, 10000);
+    return () => clearInterval(t);
+  }, []);
+  const check = data && data.lastCheck;
+  if (!check) return <div className="sync-note">No sheet data loaded yet</div>;
+  const mins = Math.max(0, Math.round((Date.now() - new Date(check.at).getTime()) / 60000));
+  const every = (data.config && data.config.autoSyncMin) || 15;
+  const behind = mins > Math.max(45, every * 3);
+  const ago = mins < 1 ? 'just now' : mins < 60 ? `${mins} min ago` : `${Math.round(mins / 60)} h ago`;
   return (
-    <div className="sync-note">
-      {last ? `Sheet data as of ${new Date(last.at).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'Asia/Kolkata' })}` : 'No sheet data loaded yet'}
+    <div className="sync-note" style={behind ? { color: '#b42318' } : undefined}>
+      {behind ? `Sync is behind: last check ${ago}` : `Sheet checked ${ago}`}
+      {data.last && !data.last.ok && <div>Last attempt failed. See Settings.</div>}
     </div>
   );
 }
