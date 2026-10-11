@@ -7,6 +7,59 @@ import { MODES, inr, int } from '../format.js';
 const STATUSES = ['Pending confirmation', 'Cancelled', 'Confirmed', 'In Transit', 'Delivered', 'RTO'];
 const fmtDT = (s) => (s ? new Date(s).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'Asia/Kolkata' }) : 'Undated');
 
+function ShopifySection({ s, reveal, onReveal }) {
+  if (!s) return null;
+  if (!s.found) {
+    const text = s.reason === 'not_configured' ? 'Shopify is not connected yet. Connect it in Settings to see customer details and items here.'
+      : s.reason === 'error' ? `Could not load this order from Shopify: ${s.error}`
+      : 'Shopify has no data for this order yet. If the order is older than 60 days, Shopify only releases it once the app has the read_all_orders permission.';
+    return <div className="banner" style={{ marginTop: 14 }}>{text}</div>;
+  }
+  const a = s.address || {}; const c = s.customer || {};
+  const where = [a.city, a.state, a.country].filter(Boolean).join(', ');
+  return (
+    <>
+      <h2 style={{ marginTop: 18 }}>Items ordered</h2>
+      {s.items.length ? (
+        <table>
+          <thead><tr><th>Item</th><th className="num">Qty</th><th className="num">Price</th></tr></thead>
+          <tbody>
+            {s.items.map((i, k) => (
+              <tr key={k}>
+                <td style={{ whiteSpace: 'normal' }}>{i.title}{i.variantTitle && <span className="muted"> · {i.variantTitle}</span>}{i.sku && <span className="muted"> · {i.sku}</span>}</td>
+                <td className="num">{i.quantity}{i.orderedQuantity !== i.quantity && <span className="muted"> (ordered {i.orderedQuantity})</span>}</td>
+                <td className="num">{i.price == null ? '—' : inr(i.price)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      ) : <p className="muted">No items on this order.</p>}
+      <dl className="kv" style={{ marginTop: 10 }}>
+        {s.subtotal != null && <><dt>Subtotal</dt><dd>{inr(s.subtotal)}</dd></>}
+        {s.discounts > 0 && <><dt>Discounts</dt><dd>−{inr(s.discounts)}</dd></>}
+        {s.shipping != null && <><dt>Shipping</dt><dd>{inr(s.shipping)}</dd></>}
+        {s.total != null && <><dt>Total (Shopify)</dt><dd><b>{inr(s.total)}</b></dd></>}
+      </dl>
+      <h2 style={{ marginTop: 18 }}>Customer (Shopify)</h2>
+      <dl className="kv">
+        <dt>Name</dt><dd>{c.name || '—'}</dd>
+        <dt>Location</dt><dd>{where || '—'}</dd>
+        {reveal ? (
+          <>
+            <dt>Phone</dt><dd>{c.phone || a.phone || '—'}</dd>
+            <dt>Email</dt><dd>{c.email || '—'}</dd>
+            <dt>Address</dt><dd style={{ whiteSpace: 'normal' }}>{[a.name, a.line1, a.line2, a.city, a.state, a.zip, a.country].filter(Boolean).join(', ') || '—'}</dd>
+          </>
+        ) : <><dt>Phone, email, address</dt><dd><button className="btn ghost" onClick={onReveal}>Reveal</button></dd></>}
+        <dt>Payment</dt><dd>{[(s.paymentGateways || []).join(', '), s.financialStatus].filter(Boolean).join(' · ') || '—'}</dd>
+        <dt>Fulfilment</dt><dd>{s.fulfillmentStatus || '—'}{s.cancelledAt && <span className="muted"> · cancelled {fmtDT(s.cancelledAt)}</span>}</dd>
+        {s.note && <><dt>Customer note</dt><dd style={{ whiteSpace: 'normal' }}>{s.note}</dd></>}
+        {s.tags && s.tags.length > 0 && <><dt>Tags</dt><dd>{s.tags.join(', ')}</dd></>}
+      </dl>
+    </>
+  );
+}
+
 export function OrderDrawer({ sheetRow, onClose }) {
   const [reveal, setReveal] = useState(false);
   const { data, error, loading } = useApi(`/orders/${sheetRow}`, { reveal: reveal ? '1' : '' });
@@ -33,7 +86,8 @@ export function OrderDrawer({ sheetRow, onClose }) {
                 <dt>Phone / email</dt>
                 <dd>{reveal ? (data.phoneShown || data.emailShown || '—') : <button className="btn ghost" onClick={() => setReveal(true)}>Reveal</button>}</dd>
               </dl>
-              {data.conflicts.length > 0 && <div className="banner warn"><b>Conflicts:</b> {data.conflicts.join('; ')}</div>}
+              <ShopifySection s={data.shopify} reveal={reveal} onReveal={() => setReveal(true)} />
+              {data.conflicts.length > 0 && <div className="banner warn" style={{ marginTop: 14 }}><b>Conflicts:</b> {data.conflicts.join('; ')}</div>}
               <h2>Original sheet row {data.sheetRow}</h2>
               <table><tbody>{data.raw.map((c) => <tr key={c.column}><td className="muted">{c.column} · {c.header}</td><td style={{ whiteSpace: 'normal' }}>{c.value || <span className="muted">(blank)</span>}</td></tr>)}</tbody></table>
               <h2 style={{ marginTop: 18 }}>Cleaning log</h2>
@@ -67,7 +121,7 @@ export default function Orders() {
       <FilterBar range={data && data.range} />
       <div className="page">
         <h1>Orders</h1>
-        <p className="lede">Click an order to see the original sheet row and what the cleaning step changed.</p>
+        <p className="lede">Click an order to see its items, customer details from Shopify, the original sheet row and what the cleaning step changed.</p>
         <div className="filters">
           <input type="search" placeholder="Order ID or name" value={q} onChange={(e) => setQ(e.target.value)} />
           <select value={status} onChange={(e) => setStatus(e.target.value)} aria-label="Status"><option value="">All statuses</option>{STATUSES.map((s) => <option key={s}>{s}</option>)}</select>
@@ -82,12 +136,12 @@ export default function Orders() {
               <>
                 <div className="tablewrap">
                   <table>
-                    <thead><tr><th>Order</th><th>Date (IST)</th><th>Name</th><th className="num">Amount</th><th>Mode</th><th>Status</th><th>NDR</th><th>Product</th></tr></thead>
+                    <thead><tr><th>Order</th><th>Date (IST)</th><th>Name</th><th className="num">Amount</th><th>Mode</th><th>Status</th><th>NDR</th><th>City</th><th>Items</th></tr></thead>
                     <tbody>
                       {data.rows.map((o) => (
                         <tr key={o.sheetRow} className="click" onClick={() => setOpen(o.sheetRow)} tabIndex={0} onKeyDown={(e) => e.key === 'Enter' && setOpen(o.sheetRow)}>
                           <td>#{o.orderId}</td><td>{fmtDT(o.orderDate)}</td><td>{o.name}</td><td className="num">{inr(o.amount)}</td>
-                          <td>{o.paymentMode}</td><td><StatusTag s={o.finalStatus} /></td><td>{o.ndr ? 'Yes' : ''}</td><td>{o.product}</td>
+                          <td>{o.paymentMode}</td><td><StatusTag s={o.finalStatus} /></td><td>{o.ndr ? 'Yes' : ''}</td><td>{o.city || ''}</td><td title={o.items || o.product}>{o.items || o.product}</td>
                         </tr>
                       ))}
                     </tbody>

@@ -6,7 +6,7 @@
   "scripts": {
     "start": "node src/index.js",
     "dev": "node --watch src/index.js",
-    "test": "node --test test/core.test.js"
+    "test": "node --test test/core.test.js test/shopify.test.js test/shopifyAuth.test.js"
   },
   "engines": { "node": ">=18" },
   "dependencies": {

@@ -55,6 +55,32 @@ The 5-minute trigger the script also creates is a safety net, and it keeps a sle
 
 The Apps Script needs someone with editor access to install it. Without that, let the server look at the sheet more often: set `SYNC_INTERVAL_MIN=1` (half a minute works too: `0.5`). New orders then appear within about a minute. Unchanged sheets cost almost nothing because cleaning is skipped. On a host that sleeps, also ping `/api/cron/sync` every minute (cron-job.org) with `CRON_SECRET` and `CRON_MIN_AGE_MIN=1`.
 
+## Shopify: customer details and items per order
+
+Every sheet order is matched by its number (`#1300` is 1300) to the same order in Shopify. The Orders screen then shows the items (in the table and in the order drawer), the customer name and city, and, behind the **Reveal** button, phone, email and the full address, as the sheet's own phone and email already do.
+
+There are two ways to give the server access. Which one applies depends on whether your **store is listed under Stores in the Dev Dashboard** (dev.shopify.com/dashboard):
+
+- **Store not listed (the usual case for a normal store): install link.** Steps below.
+- **Store listed in the same organization as the app:** no install link is needed. Create the app, add the scopes, install it on the store, copy the Client ID and secret into the server settings, and press **Test connection**. The server logs in by itself.
+
+**Setup with the install link (about 15 minutes)**
+1. Dev Dashboard, **Create app** (start from the Dev Dashboard), for example "MySoul Order Analytics".
+2. Create a version. Access scopes: `read_orders` and `read_customers`. Under **Redirect URLs** add `https://YOUR-SERVER/api/shopify/callback` (Settings, Shopify card shows the exact address). **Release** the version. The App URL can stay at its default.
+3. Distribution: choose **Custom distribution** (permanent, fine for one store), enter the store's `your-store.myshopify.com` address and generate the **install link**.
+4. The store owner opens the install link while signed in to the Shopify admin and installs the app.
+5. Dev Dashboard, the app's **Settings**: copy the Client ID and Client secret. On the server (Render, Environment) set `SHOPIFY_SHOP` (the part before `.myshopify.com`), `SHOPIFY_CLIENT_ID`, `SHOPIFY_CLIENT_SECRET`. Save and let it redeploy. Never put them in git.
+6. In the dashboard: Settings, Shopify card, **Connect Shopify**. Shopify asks the owner to approve, then returns to a "Shopify is connected" page and the first load of all orders starts.
+
+**How it runs.** The approval gives the server an access token that Shopify expires after a short time. It is renewed automatically with a refresh token kept in your database. If the connection is ever lost (app removed from the store, or the server was off for months), Settings says so and **Connect Shopify** fixes it in one click. New and changed orders are pulled every 2 minutes (`SHOPIFY_SYNC_INTERVAL_MIN`) and immediately after the sheet brings something new. Opening an order that is not loaded yet fetches it on the spot. Shopify's rate limit is handled by waiting, not failing.
+
+**Good to know**
+- By default Shopify only releases the **last 60 days** of orders to an app. Older orders need the `read_all_orders` permission, which Shopify must approve (request it in the Dev Dashboard). Once approved, add it to the app version, set `SHOPIFY_SCOPES=read_orders,read_customers,read_all_orders` on the server, and press Reconnect Shopify. Until then, older orders show "no Shopify data", and the CSV date backfill stays available for their dates.
+- The order date from Shopify also fills the "undated" sheet rows automatically, replacing the CSV upload for every order Shopify releases.
+- If names or emails come back empty, check that `read_customers` is on the released app version. Test connection reports it.
+- The access token and customer details are stored in your own MongoDB. Keep `ACCESS_PASSWORD` set.
+- The Shopify API version is set by `SHOPIFY_API_VERSION` (default `2026-04`). Shopify retires old versions after about a year.
+
 ## Dates: first job
 
 Order date comes from, in order: Order Sheet column A (year set to 2026, rolled back a year if it would land in the future) → OrdersMaster Timestamp → Shopify orders CSV (Settings → Backfill dates). Orders with none are **undated**: counted in All time, left out of dated windows, and the count is shown at the top of every screen. Upload the Shopify export once to fill #1023 to #1202.

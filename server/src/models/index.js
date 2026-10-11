@@ -10,7 +10,7 @@ const Snapshot = mongoose.model('Snapshot', new Schema({
   fetchedAt: Date,
 }));
 
-// One-time Shopify CSV backfill (file upload, not the Step 2 API).
+// Order dates from Shopify (CSV upload or the API sync). Used to date sheet rows that have no date.
 const ShopifyDate = mongoose.model('ShopifyDate', new Schema({
   orderId: { type: Number, unique: true },
   createdAt: Date,
@@ -40,6 +40,21 @@ const Order = mongoose.model('Order', new Schema({
   raw: [String],
 }, { minimize: false }));
 
+// Customer details and items from the Shopify Admin API, one document per order number.
+const ShopifyOrder = mongoose.model('ShopifyOrder', new Schema({
+  orderId: { type: Number, unique: true }, // the number in the name: "#1300" -> 1300 (matches Order.orderId)
+  shopifyId: String, name: String,
+  createdAt: Date, updatedAt: Date, cancelledAt: Date, test: Boolean,
+  financialStatus: String, fulfillmentStatus: String, paymentGateways: [String],
+  currency: String, subtotal: Number, shipping: Number, discounts: Number, total: Number,
+  note: String, tags: [String],
+  customer: { name: String, email: String, phone: String },
+  address: { name: String, line1: String, line2: String, city: String, state: String, zip: String, country: String, phone: String },
+  items: [{ _id: false, title: String, variantTitle: String, sku: String, quantity: Number, orderedQuantity: Number, price: Number }],
+  itemsSummary: String,
+  syncedAt: Date,
+}, { minimize: false }));
+
 const syncRunSchema = new Schema({
   at: { type: Date, default: Date.now },
   changed: Boolean, // false = sheet checked, nothing new
@@ -58,4 +73,4 @@ const Setting = mongoose.model('Setting', new Schema({
   value: Schema.Types.Mixed,
 }));
 
-module.exports = { Snapshot, ShopifyDate, Order, SyncRun, Setting };
+module.exports = { Snapshot, ShopifyDate, ShopifyOrder, Order, SyncRun, Setting };

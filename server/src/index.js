@@ -42,6 +42,23 @@ app.all('/api/cron/sync', (req, res) => {
      .catch((e) => res.status(e.status === 409 ? 202 : 500).json({ ok: false, error: e.message }));
 });
 
+// Shopify sends the store owner's browser back here after approving the app. No dashboard password is possible on this
+// request, so it is protected by Shopify's signature, a single-use state value and a check that the store is ours.
+const escHtml = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const resultPage = (ok, text) => `<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Shopify</title>
+<body style="font-family:system-ui,sans-serif;max-width:520px;margin:12vh auto;padding:0 20px;color:#1a1d21">
+<h1 style="font-size:22px">${ok ? 'Shopify is connected' : 'Shopify could not be connected'}</h1><p>${escHtml(text)}</p>
+<p><a href="/">${ok ? 'Back to the dashboard' : 'Back to the dashboard and try again'}</a></p></body>`;
+app.get('/api/shopify/callback', async (req, res) => {
+  try {
+    const r = await require('./services/shopifyAuth').handleCallback(req.query);
+    require('./services/shopifySync').kickFull();
+    res.type('html').send(resultPage(true, `The store ${r.shop} is linked. Customer details and items are loading now; this can take a few minutes. You can close this tab.`));
+  } catch (e) {
+    res.status(e.status && e.status < 600 ? e.status : 500).type('html').send(resultPage(false, e.message));
+  }
+});
+
 // Optional shared-password gate for everything else under /api
 app.use('/api', (req, res, next) => {
   if (!cfg.accessPassword) return next();
@@ -67,4 +84,5 @@ mongoose.connect(cfg.mongoUri).then(() => {
   console.log('[db] connected');
   app.listen(cfg.port, () => console.log(`[server] http://localhost:${cfg.port}`));
   startAutoSync();
+  require('./services/shopifySync').start();
 }).catch((e) => { console.error('[db] connection failed:', e.message); process.exit(1); });

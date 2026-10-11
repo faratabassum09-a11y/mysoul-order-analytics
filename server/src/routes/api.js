@@ -1,12 +1,14 @@
 const express = require('express');
 const multer = require('multer');
-const { Order, SyncRun, Setting } = require('../models');
+const { Order, SyncRun, Setting, ShopifyOrder } = require('../models');
 const { resolveWindow, dateFilter } = require('../lib/windows');
 const { computeMetrics, computeTrends } = require('../lib/metrics');
 const { summarize, DEFAULT_REASON_MAP } = require('../lib/reasons');
 const { RAW_HEADERS } = require('../lib/clean');
 const { fmtDate, fmtDateTime } = require('../lib/istTime');
 const sync = require('../services/sync');
+const shopify = require('../services/shopifySync');
+const shopifyAuth = require('../services/shopifyAuth');
 const { parseCsv, assertLooksLikeOrderSheet } = require('../services/sources');
 const { getSheetConfig, saveSheetConfig } = require('../services/sheetConfig');
 const cfg = require('../config');
@@ -66,6 +68,23 @@ router.get('/settings/sheet', wrap(async (req, res) => {
 router.put('/settings/sheet', wrap(async (req, res) => { await saveSheetConfig(req.body || {}); res.json({ saved: true }); }));
 
 // ---------- metrics ----------
+// ---------- Shopify (customer details + items) ----------
+// A Shopify 401/404 must not look like "dashboard password needed" to the browser, so Shopify failures become 502.
+const shopWrap = (fn) => wrap(async (req, res) => {
+  try { await fn(req, res); } catch (e) { if (e.name === 'ShopifyError') e.status = e.status === 400 ? 400 : 502; throw e; }
+});
+router.get('/shopify/status', wrap(async (req, res) => res.json({ ...(await shopify.status()), redirectUri: shopifyAuth.redirectUri(req), scopes: cfg.shopify.scopes })));
+router.post('/shopify/connect', shopWrap(async (req, res) => res.json(await shopifyAuth.beginUrl(req)))); // returns the Shopify approval address
+router.post('/shopify/disconnect', wrap(async (req, res) => { await shopifyAuth.disconnect(); res.json({ disconnected: true }); }));
+router.post('/shopify/test', shopWrap(async (req, res) => res.json(await shopify.test())));
+router.post('/shopify/sync', shopWrap(async (req, res) => {
+  const st = await shopify.status();
+  if (!st.configured) return res.status(400).json({ error: 'Shopify is not set up yet. Add SHOPIFY_SHOP, SHOPIFY_CLIENT_ID and SHOPIFY_CLIENT_SECRET on the server.' });
+  if (st.running) return res.status(409).json({ error: 'A Shopify sync is already running' });
+  shopify.run({ full: req.query.full === '1' }).catch((e) => console.warn('[shopify] sync failed:', e.message)); // runs in the background; progress shows in /shopify/status
+  res.status(202).json({ started: true });
+}));
+
 router.get('/metrics', wrap(async (req, res) => {
   const w = winOf(req.query);
   const [cur, prev, undated] = await Promise.all([
@@ -135,6 +154,9 @@ router.get('/orders', wrap(async (req, res) => {
     Order.countDocuments(f),
     Order.find(f).select(LIST_FIELDS).sort(SORTS[req.query.sort] || SORTS.date).skip((page - 1) * limit).limit(limit).lean(),
   ]);
+  const sh = await ShopifyOrder.find({ orderId: { $in: rows.map((r) => r.orderId).filter((n) => n != null) } }).select('orderId itemsSummary address.city').lean();
+  const byId = new Map(sh.map((s) => [s.orderId, s]));
+  for (const r of rows) { const s = byId.get(r.orderId); if (s) { r.items = s.itemsSummary; r.city = s.address && s.address.city; } }
   res.json({ range: rangeOut(w), total, page, limit, rows });
 }));
 
@@ -152,6 +174,27 @@ router.get('/orders/export.csv', wrap(async (req, res) => {
   res.send('\ufeff' + lines.join('\n'));
 }));
 
+// Customer details and items for the order drawer. Phone, email and the street address stay hidden until "Reveal".
+async function shopifyBlock(orderId, reveal) {
+  const st = await shopify.status();
+  if (!st.configured) return { found: false, reason: 'not_configured' };
+  let s = null;
+  if (orderId != null) { try { s = await shopify.ensureOrder(orderId); } catch (e) { return { found: false, reason: 'error', error: e.message }; } }
+  if (!s) return { found: false, reason: 'not_found' };
+  const a = s.address || {}; const c = s.customer || {};
+  const out = {
+    found: true, syncedAt: s.syncedAt, createdAt: s.createdAt, financialStatus: s.financialStatus, fulfillmentStatus: s.fulfillmentStatus,
+    paymentGateways: s.paymentGateways, currency: s.currency, subtotal: s.subtotal, shipping: s.shipping, discounts: s.discounts, total: s.total,
+    note: s.note, tags: s.tags, cancelledAt: s.cancelledAt, test: s.test, items: s.items,
+    customer: { name: c.name }, address: { city: a.city, state: a.state, country: a.country },
+  };
+  if (reveal) {
+    out.customer = { name: c.name, email: c.email, phone: c.phone };
+    out.address = { name: a.name, line1: a.line1, line2: a.line2, city: a.city, state: a.state, zip: a.zip, country: a.country, phone: a.phone };
+  }
+  return out;
+}
+
 router.get('/orders/:sheetRow', wrap(async (req, res) => {
   const o = await Order.findOne({ sheetRow: Number(req.params.sheetRow) }).lean();
   if (!o) return res.status(404).json({ error: 'Order not found' });
@@ -160,6 +203,7 @@ router.get('/orders/:sheetRow', wrap(async (req, res) => {
   const out = { ...o, raw: RAW_HEADERS.map((h, i) => ({ column: String.fromCharCode(65 + i), header: h || '(no header)', value: raw[i] || '' })) };
   if (reveal) { out.phoneShown = o.phone; out.emailShown = o.email; }
   delete out.phone; delete out.email;
+  out.shopify = await shopifyBlock(o.orderId, reveal);
   res.json(out);
 }));
 

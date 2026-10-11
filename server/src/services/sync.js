@@ -81,7 +81,9 @@ const syncFromSheet = (trigger = 'manual', { force = trigger === 'manual' } = {}
   }
   await saveSnapshot('order', orderRows, sc.source, orderHash);
   if (masterRows) await saveSnapshot('master', masterRows, sc.source, masterHash);
-  return recleanFromSnapshots(trigger, sc.source, warnings);
+  const result = await recleanFromSnapshots(trigger, sc.source, warnings);
+  require('./shopifySync').kick(); // new rows in the sheet: fetch their customer details and items right away
+  return result;
 });
 
 const syncFromUpload = ({ orderRows, masterRows }) => guarded('upload', 'upload', async () => {

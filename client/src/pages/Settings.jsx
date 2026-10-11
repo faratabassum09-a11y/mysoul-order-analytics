@@ -58,9 +58,86 @@ function SyncCard() {
       <div className="field"><label>OrdersMaster CSV (optional)</label><input type="file" accept=".csv" onChange={(e) => setFiles({ ...files, ordersMaster: e.target.files[0] })} /></div>
       <button className="btn ghost" disabled={!!busy || (!files.orderSheet && !files.ordersMaster)} onClick={() => run('upload', () => api.upload('/sync/upload', form(files)))}>Upload and clean</button>
       <h2 style={{ marginTop: 18 }}>Backfill dates from Shopify</h2>
-      <p className="muted">One-time Shopify Admin, Orders, Export CSV. Fills dates for orders that have none (such as #1023 to #1202). This is a file upload, not the Step 2 API.</p>
+      <p className="muted">Not needed once Shopify is connected above: the API fills missing dates by itself, for the orders Shopify releases to the app (the last 60 days, or all with the read_all_orders permission). For older orders: Shopify Admin, Orders, Export CSV, then upload it here.</p>
       <div className="field"><input type="file" accept=".csv" onChange={(e) => setFiles({ ...files, shopify: e.target.files[0] })} /></div>
       <button className="btn ghost" disabled={!!busy || !files.shopify} onClick={() => run('shopify', () => api.upload('/sync/shopify-csv', form({ file: files.shopify })))}>Import dates</button>
+    </div>
+  );
+}
+
+function ShopifyCard() {
+  const { data, error, loading, reload } = useApi('/shopify/status');
+  const [busy, setBusy] = useState('');
+  const [msg, setMsg] = useState(null);
+  const [result, setResult] = useState(null);
+  const running = !!(data && data.running);
+  useEffect(() => { if (!running) return undefined; const t = setInterval(reload, 4000); return () => clearInterval(t); }, [running]); // eslint-disable-line react-hooks/exhaustive-deps
+  const start = async (full) => {
+    setBusy('sync'); setMsg(null);
+    try {
+      await api.post(`/shopify/sync${full ? '?full=1' : ''}`);
+      setMsg({ ok: true, text: full ? 'Loading every order Shopify allows. This can take several minutes. You can leave this page.' : 'Checking Shopify for new and changed orders…' });
+      reload();
+    } catch (e) { setMsg({ ok: false, text: e.message }); } finally { setBusy(''); }
+  };
+  const connect = async () => {
+    setBusy('connect'); setMsg(null);
+    try { const r = await api.post('/shopify/connect'); window.location.href = r.url; } // Shopify asks the store owner to approve, then returns here
+    catch (e) { setMsg({ ok: false, text: e.message }); setBusy(''); }
+  };
+  const disconnect = async () => {
+    if (!window.confirm('Disconnect Shopify? Customer details already loaded stay, but no new ones will arrive until you connect again.')) return;
+    setBusy('disconnect'); setMsg(null);
+    try { await api.post('/shopify/disconnect'); reload(); } catch (e) { setMsg({ ok: false, text: e.message }); } finally { setBusy(''); }
+  };
+  const test = async () => {
+    setBusy('test'); setMsg(null); setResult(null);
+    try { setResult(await api.post('/shopify/test')); } catch (e) { setMsg({ ok: false, text: e.message }); } finally { setBusy(''); }
+  };
+  return (
+    <div className="card">
+      <h2>Shopify (customer details and items)</h2>
+      <Loading error={error} loading={loading}>
+        {data && !data.configured && (
+          <div className="banner err">
+            <b>Not connected yet.</b> On the server, add <code>SHOPIFY_SHOP</code> (the part before .myshopify.com), <code>SHOPIFY_CLIENT_ID</code> and <code>SHOPIFY_CLIENT_SECRET</code> from your app in the Shopify Dev Dashboard, then redeploy. After that, a Connect Shopify button appears here. Steps are in the README, section "Shopify".
+          </div>
+        )}
+        {data && data.configured && (
+          <>
+            <p className="muted">
+              Store {data.shop}.myshopify.com · API {data.apiVersion} · {data.orders} orders loaded · {data.intervalMin ? `pulls changes every ${data.intervalMin} min and after every sheet change` : 'pulls changes after every sheet change'}
+              {data.last && <> · last run {when(data.last.at)}{data.last.ok ? ` (${data.last.mode}, ${data.last.saved} orders)` : ''}</>}
+            </p>
+            {data.auth && data.auth.mode === 'none' && (
+              <div className="banner err">
+                <b>The store is not linked yet.</b> Press <b>Connect Shopify</b>, then approve the app as the store owner. Before that, make sure this exact address is listed under <b>Redirect URLs</b> in your app version in the Shopify Dev Dashboard (released), and that the store owner has opened the app's install link once:
+                <div style={{ margin: '6px 0' }}><code>{data.redirectUri}</code></div>
+              </div>
+            )}
+            {data.auth && data.auth.needsReauth && <div className="banner err"><b>The Shopify connection has expired.</b> Press Connect Shopify to link the store again.</div>}
+            {data.auth && data.auth.mode === 'install-link' && !data.auth.needsReauth && <p className="muted">Linked with the store owner's approval{data.auth.installedAt ? ` on ${when(data.auth.installedAt)}` : ''} · permissions: {data.auth.scope || '—'}</p>}
+            {running && <div className="banner">Loading from Shopify… {data.progress} orders so far ({data.mode}).</div>}
+            {data.last && !data.last.ok && <div className="banner err">Last Shopify run failed: {data.last.error}</div>}
+            <div className="filters">
+              <button className={data.auth && data.auth.mode === 'none' ? 'btn' : 'btn ghost'} disabled={!!busy || running} onClick={connect}>{busy === 'connect' ? 'Opening Shopify…' : data.auth && data.auth.mode === 'install-link' ? 'Reconnect Shopify' : 'Connect Shopify'}</button>
+              <button className="btn ghost" disabled={!!busy || running} onClick={test}>{busy === 'test' ? 'Testing…' : 'Test connection'}</button>
+              <button className="btn ghost" disabled={!!busy || running} onClick={() => start(false)}>Sync now</button>
+              <button className="btn ghost" disabled={!!busy || running} onClick={() => start(true)}>Load all orders</button>
+              {data.auth && data.auth.mode === 'install-link' && <button className="btn ghost" disabled={!!busy || running} onClick={disconnect}>Disconnect</button>}
+            </div>
+            {result && (
+              <div className={`banner ${result.ok ? '' : 'err'}`}>
+                <b>{result.ok ? 'Connected.' : 'Connected, but something needs fixing.'}</b> Shop: {result.shop && result.shop.name}. Permissions: {result.scopes.join(', ') || 'none'}.
+                {result.sample && <> Newest order {result.sample.name}: {result.sample.items} items, customer name {result.sample.hasCustomerName ? 'yes' : 'no'}, email {result.sample.hasEmail ? 'yes' : 'no'}, address {result.sample.hasAddress ? 'yes' : 'no'}.</>}
+                {!result.allOrdersScope && <> Without the read_all_orders permission, Shopify only returns orders from the last 60 days.</>}
+                {result.problems.length > 0 && <ul className="log">{result.problems.map((p, i) => <li key={i}>{p}</li>)}</ul>}
+              </div>
+            )}
+          </>
+        )}
+        {msg && <div className={`banner ${msg.ok ? '' : 'err'}`}>{msg.text}</div>}
+      </Loading>
     </div>
   );
 }
@@ -158,10 +235,11 @@ export default function Settings() {
   return (
     <div className="page">
       <h1>Settings</h1>
-      <p className="lede">Sync the sheet, backfill missing dates and maintain the reason buckets.</p>
+      <p className="lede">Sync the sheet, connect Shopify, backfill missing dates and maintain the reason buckets.</p>
       <div className="two">
         <div style={{ display: 'grid', gap: 14, alignContent: 'start' }}>
           <SheetCard onChanged={() => setV((n) => n + 1)} />
+          <ShopifyCard />
           <SyncCard key={v} />
         </div>
         <ReasonMap />
