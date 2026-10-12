@@ -60,7 +60,7 @@ test('metrics definitions and payment split', () => {
   const a = m.All;
   assert.equal(a.total, 5);
   assert.equal(a.pending, 1);
-  assert.equal(a.confirmation.n, 3); assert.equal(a.confirmation.d, 4); // yes=3 (1024,1245,1030), cancel=1
+  assert.equal(a.confirmation.n, 3); assert.equal(a.confirmation.d, 5); // yes=3 (1024,1245,1030) of all 5 orders (cancel=1, pending=1)
   assert.equal(a.rto.n, 1); assert.equal(a.rto.d, 2); // RTO 1024, Delivered 1245
   assert.equal(a.inTransit, 2);
   assert.equal(a.netRevenue, 1499);
