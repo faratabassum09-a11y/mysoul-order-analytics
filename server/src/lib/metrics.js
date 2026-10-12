@@ -26,6 +26,7 @@ function computeBlock(orders) {
     }
   }
   const closed = b.delivered + b.rto;
+  const decided = b.confirmedYes + b.cancel;
   return {
     total: b.total,
     value: b.value,
@@ -34,8 +35,8 @@ function computeBlock(orders) {
     confirmedYes: b.confirmedYes,
     cancelled: b.cancel,
     dispatched: b.dispatched,
-    confirmation: pct(b.confirmedYes, b.total),
-    cancellation: pct(b.cancel, b.total),
+    confirmation: pct(b.confirmedYes, decided),
+    cancellation: pct(b.cancel, decided),
     dispatch: pct(b.dispatchedConfirmed, b.confirmedYes),
     ndr: pct(b.ndr, b.dispatched),
     ndrToRto: pct(b.ndrRto, b.ndrClosed),
@@ -108,4 +109,32 @@ function computeTrends(orders, gran, start, end, now = new Date()) {
   return { gran, points };
 }
 
-module.exports = { computeBlock, computeMetrics, computeTrends, pct, MODES };
+// ---- Trends dashboard: fixed look-back per granularity, full Overview block per bucket and payment mode ----
+// daily = last 30 days, weekly = last 12 weeks (Mon-Sun), monthly = last 12 calendar months. The last bucket is usually still in progress.
+const LOOKBACK = { daily: 30, weekly: 12, monthly: 12 };
+function overviewStart(gran, now = new Date()) {
+  if (gran === 'weekly') return new Date(T.startOfWeek(now).getTime() - 11 * 7 * T.DAY);
+  if (gran === 'monthly') return T.addMonths(T.startOfMonth(now), -11);
+  return new Date(T.startOfDay(now).getTime() - 29 * T.DAY);
+}
+function computeOverviewTrends(orders, gran, now = new Date()) {
+  const start = overviewStart(gran, now);
+  const keys = [];
+  for (let b = start; b <= now && keys.length < 40; b = nextBucket(b, gran)) keys.push(b);
+  const map = new Map(keys.map((k) => [k.getTime(), []]));
+  for (const o of orders) {
+    if (!o.orderDate) continue;
+    const k = bucketStart(o.orderDate, gran).getTime();
+    if (map.has(k)) map.get(k).push(o);
+  }
+  const points = keys.map((k) => {
+    const nb = nextBucket(k, gran);
+    const m = computeMetrics(map.get(k.getTime()));
+    const p = { key: T.fmtDate(k), end: T.fmtDate(new Date(nb.getTime() - 1)), partial: nb > now };
+    for (const mode of ['All', ...MODES]) p[mode] = m[mode] || computeBlock([]);
+    return p;
+  });
+  return { gran, lookback: LOOKBACK[gran], start: T.fmtDate(start), points };
+}
+
+module.exports = { computeBlock, computeMetrics, computeTrends, computeOverviewTrends, overviewStart, pct, MODES };

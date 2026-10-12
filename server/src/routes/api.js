@@ -2,7 +2,7 @@ const express = require('express');
 const multer = require('multer');
 const { Order, SyncRun, Setting, ShopifyOrder } = require('../models');
 const { resolveWindow, dateFilter } = require('../lib/windows');
-const { computeMetrics, computeTrends } = require('../lib/metrics');
+const { computeMetrics, computeTrends, computeOverviewTrends, overviewStart } = require('../lib/metrics');
 const { summarize, DEFAULT_REASON_MAP } = require('../lib/reasons');
 const { RAW_HEADERS } = require('../lib/clean');
 const { fmtDate, fmtDateTime } = require('../lib/istTime');
@@ -93,6 +93,14 @@ router.get('/metrics', wrap(async (req, res) => {
     Order.countDocuments({ excluded: null, orderDate: null }),
   ]);
   res.json({ range: rangeOut(w), current: computeMetrics(cur), previous: prev ? computeMetrics(prev) : null, undated });
+}));
+
+// Trends dashboard: full Overview metrics per day (30 days), week (12 weeks) or month (12 months), independent of the window picker.
+router.get('/trends/overview', wrap(async (req, res) => {
+  const gran = ['daily', 'weekly', 'monthly'].includes(req.query.granularity) ? req.query.granularity : 'daily';
+  const now = new Date();
+  const orders = await validOrders({ start: overviewStart(gran, now), end: new Date(now.getTime() + 24 * 3600 * 1000) });
+  res.json(computeOverviewTrends(orders, gran, now));
 }));
 
 router.get('/trends', wrap(async (req, res) => {
