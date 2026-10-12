@@ -26,7 +26,6 @@ function computeBlock(orders) {
     }
   }
   const closed = b.delivered + b.rto;
-  const decided = b.confirmedYes + b.cancel;
   return {
     total: b.total,
     value: b.value,
@@ -35,8 +34,8 @@ function computeBlock(orders) {
     confirmedYes: b.confirmedYes,
     cancelled: b.cancel,
     dispatched: b.dispatched,
-    confirmation: pct(b.confirmedYes, decided),
-    cancellation: pct(b.cancel, decided),
+    confirmation: pct(b.confirmedYes, b.total),
+    cancellation: pct(b.cancel, b.total),
     dispatch: pct(b.dispatchedConfirmed, b.confirmedYes),
     ndr: pct(b.ndr, b.dispatched),
     ndrToRto: pct(b.ndrRto, b.ndrClosed),
