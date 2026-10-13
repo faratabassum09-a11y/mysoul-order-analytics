@@ -4,13 +4,14 @@ import { api, getKey, setKey, useApi } from './api.js';
 import Overview from './pages/Overview.jsx';
 import Trends from './pages/Trends.jsx';
 import PaymentMode from './pages/PaymentMode.jsx';
+import Campaigns from './pages/Campaigns.jsx';
 import Reasons from './pages/Reasons.jsx';
 import Orders from './pages/Orders.jsx';
 import Issues from './pages/Issues.jsx';
 import Settings from './pages/Settings.jsx';
 
 const NAV = [
-  ['/', 'Overview'], ['/trends', 'Trends'], ['/payment-mode', 'Payment mode'], ['/reasons', 'Reasons'],
+  ['/', 'Overview'], ['/trends', 'Trends'], ['/payment-mode', 'Payment mode'], ['/campaigns', 'Campaigns'], ['/reasons', 'Reasons'],
   ['/orders', 'Orders'], ['/issues', 'Data issues'], ['/settings', 'Settings'],
 ];
 
@@ -87,6 +88,7 @@ export default function App() {
           <Route path="/" element={<Overview />} />
           <Route path="/trends" element={<Trends />} />
           <Route path="/payment-mode" element={<PaymentMode />} />
+          <Route path="/campaigns" element={<Campaigns />} />
           <Route path="/reasons" element={<Reasons />} />
           <Route path="/orders" element={<Orders />} />
           <Route path="/issues" element={<Issues />} />

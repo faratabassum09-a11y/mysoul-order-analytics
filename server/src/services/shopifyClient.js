@@ -114,6 +114,7 @@ const ORDER_FIELDS = `
   id name createdAt updatedAt cancelledAt test note tags currencyCode
   displayFinancialStatus displayFulfillmentStatus paymentGatewayNames
   email phone
+  customAttributes { key value }
   customer { displayName email phone }
   shippingAddress { name address1 address2 city province zip country phone }
   currentSubtotalPriceSet { shopMoney { amount } }

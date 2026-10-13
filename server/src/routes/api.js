@@ -3,6 +3,7 @@ const multer = require('multer');
 const { Order, SyncRun, Setting, ShopifyOrder } = require('../models');
 const { resolveWindow, dateFilter } = require('../lib/windows');
 const { computeMetrics, computeTrends, computeOverviewTrends, overviewStart } = require('../lib/metrics');
+const { computeCampaigns, BY: CAMPAIGN_BY } = require('../lib/campaigns');
 const { summarize, DEFAULT_REASON_MAP } = require('../lib/reasons');
 const { RAW_HEADERS } = require('../lib/clean');
 const { fmtDate, fmtDateTime } = require('../lib/istTime');
@@ -110,6 +111,19 @@ router.get('/trends', wrap(async (req, res) => {
   res.json({ range: rangeOut(w), ...computeTrends(orders, gran, w.start, w.end) });
 }));
 
+// Ad performance: orders in the window grouped by campaign / ad set / ad / source ..., with the sheet's confirmation, RTO and delivered numbers.
+router.get('/campaigns', wrap(async (req, res) => {
+  const w = winOf(req.query);
+  const by = Object.keys(CAMPAIGN_BY).includes(req.query.by) ? req.query.by : 'campaign';
+  const modeQ = MODES.includes(req.query.mode) ? { paymentMode: req.query.mode } : {};
+  const orders = await validOrders(w, modeQ);
+  const ids = orders.map((o) => o.orderId).filter((n) => n != null);
+  const sh = await ShopifyOrder.find({ orderId: { $in: ids } }).select('orderId marketing').lean();
+  const byId = new Map(sh.filter((s) => s.marketing).map((s) => [s.orderId, s.marketing]));
+  const [loaded, shopifyOrders] = await Promise.all([ShopifyOrder.countDocuments({ attrsV: { $gte: 1 } }), ShopifyOrder.estimatedDocumentCount()]);
+  res.json({ range: rangeOut(w), ...computeCampaigns(orders, byId, by), shopifyOrders, marketingLoaded: loaded });
+}));
+
 // ---------- reasons ----------
 async function getReasonMap() {
   const s = await Setting.findOne({ key: 'reasonMap' }).lean();
@@ -172,10 +186,11 @@ const csvCell = (v) => { const s = v == null ? '' : String(v); return /[",\n\r]/
 router.get('/orders/export.csv', wrap(async (req, res) => {
   const { f } = ordersQuery(req.query);
   const rows = await Order.find(f).sort(SORTS.date).lean(); // phone / email deliberately not exported
-  const head = ['Order ID', 'Order date (IST)', 'Name', 'Amount', 'Product', 'Payment mode', 'Confirmed', 'Dispatched', 'Delivery status', 'Final status', 'NDR', 'RTO', 'Notes', 'RTO reason', 'Order link', 'Sheet row'];
+  const mk = new Map((await ShopifyOrder.find({ orderId: { $in: rows.map((r) => r.orderId).filter((n) => n != null) } }).select('orderId marketing').lean()).map((x) => [x.orderId, x.marketing || {}]));
+  const head = ['Order ID', 'Order date (IST)', 'Name', 'Amount', 'Product', 'Payment mode', 'Confirmed', 'Dispatched', 'Delivery status', 'Final status', 'NDR', 'RTO', 'Notes', 'RTO reason', 'Order link', 'Sheet row', 'Source', 'Campaign', 'Ad set', 'Ad'];
   const lines = [head.join(',')];
   for (const o of rows) {
-    lines.push([o.orderId, o.orderDate ? fmtDateTime(o.orderDate) : 'undated', o.name, o.amount, o.product, o.paymentMode, o.confirmed, o.dispatched ? 'Yes' : '', o.deliveryStatus, o.finalStatus, o.ndr ? 'Yes' : '', o.rto, o.notes, o.rtoReason, o.orderLink, o.sheetRow].map(csvCell).join(','));
+    lines.push([o.orderId, o.orderDate ? fmtDateTime(o.orderDate) : 'undated', o.name, o.amount, o.product, o.paymentMode, o.confirmed, o.dispatched ? 'Yes' : '', o.deliveryStatus, o.finalStatus, o.ndr ? 'Yes' : '', o.rto, o.notes, o.rtoReason, o.orderLink, o.sheetRow, (mk.get(o.orderId) || {}).sourceGroup, (mk.get(o.orderId) || {}).utmCampaign, (mk.get(o.orderId) || {}).utmMedium, (mk.get(o.orderId) || {}).utmContent].map(csvCell).join(','));
   }
   res.setHeader('Content-Type', 'text/csv; charset=utf-8');
   res.setHeader('Content-Disposition', `attachment; filename="orders-${fmtDate(new Date())}.csv"`);
@@ -193,7 +208,7 @@ async function shopifyBlock(orderId, reveal) {
   const out = {
     found: true, syncedAt: s.syncedAt, createdAt: s.createdAt, financialStatus: s.financialStatus, fulfillmentStatus: s.fulfillmentStatus,
     paymentGateways: s.paymentGateways, currency: s.currency, subtotal: s.subtotal, shipping: s.shipping, discounts: s.discounts, total: s.total,
-    note: s.note, tags: s.tags, cancelledAt: s.cancelledAt, test: s.test, items: s.items,
+    note: s.note, tags: s.tags, cancelledAt: s.cancelledAt, test: s.test, items: s.items, marketing: s.marketing || null,
     customer: { name: c.name }, address: { city: a.city, state: a.state, country: a.country },
   };
   if (reveal) {
