@@ -62,6 +62,18 @@ const ShopifyOrder = mongoose.model('ShopifyOrder', new Schema({
   syncedAt: Date,
 }, { minimize: false }));
 
+// Tracking status from Shipway, one document per order number. Kept apart from Order: the sheet status and the Shipway status are shown side by side.
+const ShipwayShipment = mongoose.model('ShipwayShipment', new Schema({
+  orderId: { type: Number, unique: true },
+  found: Boolean, // false = Shipway has no shipment under this order number (yet)
+  shipwayOrderId: String, // the id format that matched ("1874" or "#1874")
+  statusCode: String, status: String, group: { type: String, index: true }, final: Boolean,
+  carrier: String, awb: String, from: String, to: String,
+  pickupDate: String, statusTime: String, statusAt: Date,
+  history: [{ _id: false, code: String, status: String, at: Date }], // changes seen by this app (Shipway's reply carries only the latest status)
+  checkedAt: Date, changedAt: Date, error: String,
+}, { minimize: false }));
+
 const syncRunSchema = new Schema({
   at: { type: Date, default: Date.now },
   changed: Boolean, // false = sheet checked, nothing new
@@ -80,4 +92,4 @@ const Setting = mongoose.model('Setting', new Schema({
   value: Schema.Types.Mixed,
 }));
 
-module.exports = { Snapshot, ShopifyDate, ShopifyOrder, Order, SyncRun, Setting };
+module.exports = { Snapshot, ShopifyDate, ShopifyOrder, ShipwayShipment, Order, SyncRun, Setting };

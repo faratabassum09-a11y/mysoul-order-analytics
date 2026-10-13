@@ -1,15 +1,17 @@
 const express = require('express');
 const multer = require('multer');
-const { Order, SyncRun, Setting, ShopifyOrder } = require('../models');
+const { Order, SyncRun, Setting, ShopifyOrder, ShipwayShipment } = require('../models');
 const { resolveWindow, dateFilter } = require('../lib/windows');
 const { computeMetrics, computeTrends, computeOverviewTrends, overviewStart } = require('../lib/metrics');
-const { computeCampaigns, BY: CAMPAIGN_BY } = require('../lib/campaigns');
+const { computeCampaigns, diagnose, BY: CAMPAIGN_BY } = require('../lib/campaigns');
 const { summarize, DEFAULT_REASON_MAP } = require('../lib/reasons');
 const { RAW_HEADERS } = require('../lib/clean');
 const { fmtDate, fmtDateTime } = require('../lib/istTime');
 const sync = require('../services/sync');
 const shopify = require('../services/shopifySync');
 const shopifyAuth = require('../services/shopifyAuth');
+const shipway = require('../services/shipwaySync');
+const { GROUPS: SHIPWAY_GROUPS } = require('../lib/shipwayMap');
 const { parseCsv, assertLooksLikeOrderSheet } = require('../services/sources');
 const { getSheetConfig, saveSheetConfig } = require('../services/sheetConfig');
 const cfg = require('../config');
@@ -86,6 +88,20 @@ router.post('/shopify/sync', shopWrap(async (req, res) => {
   res.status(202).json({ started: true });
 }));
 
+// ---------- Shipway (dispatch and tracking status) ----------
+const shipWrap = (fn) => wrap(async (req, res) => {
+  try { await fn(req, res); } catch (e) { if (e.name === 'ShipwayError') e.status = e.status === 400 ? 400 : 502; throw e; }
+});
+router.get('/shipway/status', wrap(async (req, res) => res.json({ ...(await shipway.status()), groups: SHIPWAY_GROUPS })));
+router.post('/shipway/test', shipWrap(async (req, res) => res.json(await shipway.test())));
+router.post('/shipway/sync', shipWrap(async (req, res) => {
+  const st = await shipway.status();
+  if (!st.configured) return res.status(400).json({ error: 'Shipway is not set up yet. Add SHIPWAY_USERNAME and SHIPWAY_LICENSE_KEY on the server.' });
+  if (st.running) return res.status(409).json({ error: 'A Shipway sync is already running' });
+  shipway.run({ all: req.query.all === '1', limit: 1000 }).catch((e) => console.warn('[shipway] sync failed:', e.message)); // background; progress shows in /shipway/status
+  res.status(202).json({ started: true });
+}));
+
 router.get('/metrics', wrap(async (req, res) => {
   const w = winOf(req.query);
   const [cur, prev, undated] = await Promise.all([
@@ -121,7 +137,9 @@ router.get('/campaigns', wrap(async (req, res) => {
   const sh = await ShopifyOrder.find({ orderId: { $in: ids } }).select('orderId marketing').lean();
   const byId = new Map(sh.filter((s) => s.marketing).map((s) => [s.orderId, s.marketing]));
   const [loaded, shopifyOrders] = await Promise.all([ShopifyOrder.countDocuments({ attrsV: { $gte: 1 } }), ShopifyOrder.estimatedDocumentCount()]);
-  res.json({ range: rangeOut(w), ...computeCampaigns(orders, byId, by), shopifyOrders, marketingLoaded: loaded });
+  const out = computeCampaigns(orders, byId, by);
+  const st = await shopify.status();
+  res.json({ range: rangeOut(w), ...out, shopifyOrders, marketingLoaded: loaded, shopifyConfigured: st.configured, shopifyRunning: st.running, shopifyLast: st.last, why: diagnose({ ...out, shopifyOrders, marketingLoaded: loaded }) });
 }));
 
 // ---------- reasons ----------
@@ -157,6 +175,7 @@ function ordersQuery(q) {
   if (STATUSES.includes(q.status)) f.finalStatus = q.status;
   if (MODES.includes(q.mode) || q.mode === 'Unknown') f.paymentMode = q.mode;
   if (q.ndr === 'yes') f.ndr = true; else if (q.ndr === 'no') f.ndr = false;
+  if (q.shipway && /^[a-z]+$/.test(String(q.shipway))) f._shipway = String(q.shipway); // resolved to order ids in the route
   if (q.q) {
     const t = String(q.q).trim().replace(/^#/, '');
     const or = [{ name: new RegExp(t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i') }];
@@ -168,8 +187,23 @@ function ordersQuery(q) {
 const LIST_FIELDS = 'sheetRow orderId orderDate dateSource name amount product paymentMode confirmed deliveryStatus finalStatus ndr rto notes rtoReason conflicts';
 const SORTS = { date: { orderDate: -1, orderId: -1 }, date_asc: { orderDate: 1 }, id: { orderId: -1 }, amount: { amount: -1 } };
 
+// Turns the Shipway status filter into an order-id condition ("none" = not tracked in Shipway).
+async function applyShipwayFilter(f) {
+  const g = f._shipway; delete f._shipway;
+  if (!g) return f;
+  if (g === 'none') {
+    const ids = await ShipwayShipment.find({ found: true }).distinct('orderId');
+    f.orderId = { $nin: ids };
+  } else {
+    f.orderId = { $in: await ShipwayShipment.find({ found: true, group: g }).distinct('orderId') };
+  }
+  return f;
+}
+const shipwayCell = (s) => (s && s.found ? { status: s.status, code: s.statusCode, group: s.group, carrier: s.carrier, awb: s.awb, at: s.statusAt || s.changedAt } : null);
+
 router.get('/orders', wrap(async (req, res) => {
   const { w, f } = ordersQuery(req.query);
+  await applyShipwayFilter(f);
   const page = Math.max(1, parseInt(req.query.page) || 1);
   const limit = Math.min(200, Math.max(1, parseInt(req.query.limit) || 50));
   const [total, rows] = await Promise.all([
@@ -179,18 +213,23 @@ router.get('/orders', wrap(async (req, res) => {
   const sh = await ShopifyOrder.find({ orderId: { $in: rows.map((r) => r.orderId).filter((n) => n != null) } }).select('orderId itemsSummary address.city').lean();
   const byId = new Map(sh.map((s) => [s.orderId, s]));
   for (const r of rows) { const s = byId.get(r.orderId); if (s) { r.items = s.itemsSummary; r.city = s.address && s.address.city; } }
+  const ship = await ShipwayShipment.find({ orderId: { $in: rows.map((r) => r.orderId).filter((n) => n != null) } }).select('orderId found status statusCode group carrier awb statusAt changedAt').lean();
+  const shipById = new Map(ship.map((x) => [x.orderId, x]));
+  for (const r of rows) r.shipway = shipwayCell(shipById.get(r.orderId));
   res.json({ range: rangeOut(w), total, page, limit, rows });
 }));
 
 const csvCell = (v) => { const s = v == null ? '' : String(v); return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; };
 router.get('/orders/export.csv', wrap(async (req, res) => {
   const { f } = ordersQuery(req.query);
+  await applyShipwayFilter(f);
   const rows = await Order.find(f).sort(SORTS.date).lean(); // phone / email deliberately not exported
+  const sw = new Map((await ShipwayShipment.find({ orderId: { $in: rows.map((r) => r.orderId).filter((n) => n != null) }, found: true }).select('orderId status carrier awb').lean()).map((x) => [x.orderId, x]));
   const mk = new Map((await ShopifyOrder.find({ orderId: { $in: rows.map((r) => r.orderId).filter((n) => n != null) } }).select('orderId marketing').lean()).map((x) => [x.orderId, x.marketing || {}]));
-  const head = ['Order ID', 'Order date (IST)', 'Name', 'Amount', 'Product', 'Payment mode', 'Confirmed', 'Dispatched', 'Delivery status', 'Final status', 'NDR', 'RTO', 'Notes', 'RTO reason', 'Order link', 'Sheet row', 'Source', 'Campaign', 'Ad set', 'Ad'];
+  const head = ['Order ID', 'Order date (IST)', 'Name', 'Amount', 'Product', 'Payment mode', 'Confirmed', 'Dispatched', 'Delivery status', 'Final status', 'NDR', 'RTO', 'Notes', 'RTO reason', 'Order link', 'Sheet row', 'Source', 'Campaign', 'Ad set', 'Ad', 'Shipway status', 'Courier', 'AWB'];
   const lines = [head.join(',')];
   for (const o of rows) {
-    lines.push([o.orderId, o.orderDate ? fmtDateTime(o.orderDate) : 'undated', o.name, o.amount, o.product, o.paymentMode, o.confirmed, o.dispatched ? 'Yes' : '', o.deliveryStatus, o.finalStatus, o.ndr ? 'Yes' : '', o.rto, o.notes, o.rtoReason, o.orderLink, o.sheetRow, (mk.get(o.orderId) || {}).sourceGroup, (mk.get(o.orderId) || {}).utmCampaign, (mk.get(o.orderId) || {}).utmMedium, (mk.get(o.orderId) || {}).utmContent].map(csvCell).join(','));
+    lines.push([o.orderId, o.orderDate ? fmtDateTime(o.orderDate) : 'undated', o.name, o.amount, o.product, o.paymentMode, o.confirmed, o.dispatched ? 'Yes' : '', o.deliveryStatus, o.finalStatus, o.ndr ? 'Yes' : '', o.rto, o.notes, o.rtoReason, o.orderLink, o.sheetRow, (mk.get(o.orderId) || {}).sourceGroup, (mk.get(o.orderId) || {}).utmCampaign, (mk.get(o.orderId) || {}).utmMedium, (mk.get(o.orderId) || {}).utmContent, (sw.get(o.orderId) || {}).status, (sw.get(o.orderId) || {}).carrier, (sw.get(o.orderId) || {}).awb].map(csvCell).join(','));
   }
   res.setHeader('Content-Type', 'text/csv; charset=utf-8');
   res.setHeader('Content-Disposition', `attachment; filename="orders-${fmtDate(new Date())}.csv"`);
@@ -218,6 +257,19 @@ async function shopifyBlock(orderId, reveal) {
   return out;
 }
 
+// Shipway tracking for the order drawer. Refreshes the order first if the saved answer is old.
+async function shipwayBlock(orderId) {
+  const st = await shipway.status();
+  if (!st.configured) return { found: false, reason: 'not_configured' };
+  if (orderId == null) return { found: false, reason: 'no_id' };
+  const s = await shipway.ensureFresh(orderId);
+  if (!s || !s.found) return { found: false, reason: s && s.error ? 'error' : 'not_found', error: s && s.error, checkedAt: s && s.checkedAt };
+  return {
+    found: true, status: s.status, code: s.statusCode, group: s.group, final: s.final, carrier: s.carrier, awb: s.awb, from: s.from, to: s.to,
+    pickupDate: s.pickupDate, statusTime: s.statusTime, statusAt: s.statusAt, checkedAt: s.checkedAt, history: s.history || [],
+  };
+}
+
 router.get('/orders/:sheetRow', wrap(async (req, res) => {
   const o = await Order.findOne({ sheetRow: Number(req.params.sheetRow) }).lean();
   if (!o) return res.status(404).json({ error: 'Order not found' });
@@ -227,6 +279,7 @@ router.get('/orders/:sheetRow', wrap(async (req, res) => {
   if (reveal) { out.phoneShown = o.phone; out.emailShown = o.email; }
   delete out.phone; delete out.email;
   out.shopify = await shopifyBlock(o.orderId, reveal);
+  out.shipway = await shipwayBlock(o.orderId);
   res.json(out);
 }));
 

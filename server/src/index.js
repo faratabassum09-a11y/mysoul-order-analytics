@@ -85,4 +85,5 @@ mongoose.connect(cfg.mongoUri).then(() => {
   app.listen(cfg.port, () => console.log(`[server] http://localhost:${cfg.port}`));
   startAutoSync();
   require('./services/shopifySync').start();
+  require('./services/shipwaySync').start();
 }).catch((e) => { console.error('[db] connection failed:', e.message); process.exit(1); });

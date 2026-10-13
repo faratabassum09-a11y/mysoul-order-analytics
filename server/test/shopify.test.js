@@ -193,3 +193,13 @@ test('campaigns: groups sheet outcomes by UTM, unattributed kept apart, parent c
   assert.ok(t.rows.find((x) => x.key === 'Aquarius-Kumbh') && t.rows.find((x) => x.key === 'Leo'));
   assert.equal(computeCampaigns(orders, mk, 'adset').rows[0].campaign, 'Aquarius-Kumbh | Bracelet | ABO | 26/09');
 });
+
+test('campaigns: empty-table diagnosis names the first thing to fix', () => {
+  const { diagnose } = require('../src/lib/campaigns');
+  const base = { total: 30, matched: 0, withUtm: 0, shopifyOrders: 0, marketingLoaded: 0 };
+  assert.equal(diagnose(base), 'no_shopify_orders');
+  assert.equal(diagnose({ ...base, shopifyOrders: 900 }), 'not_reloaded');
+  assert.equal(diagnose({ ...base, shopifyOrders: 900, marketingLoaded: 900 }), 'no_match');
+  assert.equal(diagnose({ ...base, shopifyOrders: 900, marketingLoaded: 900, matched: 30 }), 'no_utm_on_orders');
+  assert.equal(diagnose({ ...base, withUtm: 3 }), null);
+});
