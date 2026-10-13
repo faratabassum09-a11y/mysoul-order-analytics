@@ -1,12 +1,13 @@
 // Pulls orders from Shopify into the ShopifyOrder collection (customer + items) and keeps them fresh.
 const cfg = require('../config');
 const { ShopifyOrder, ShopifyDate, Setting } = require('../models');
-const { normalizeOrder } = require('../lib/shopifyMap');
+const { normalizeOrder, ATTRS_V } = require('../lib/shopifyMap');
 const client = require('./shopifyClient');
 const auth = require('./shopifyAuth'); // also plugs the install-link token into the client
 
 const LAST_KEY = 'shopify.last';
 const CURSOR_KEY = 'shopify.cursor';
+const ATTRS_KEY = 'shopify.attrsV'; // which marketing-mapping version has been loaded for all orders
 const STALE_MS = 30 * 60 * 1000;
 
 const state = { runningSince: 0, mode: null, progress: 0 };
@@ -47,7 +48,9 @@ async function run({ full = false } = {}) {
   try {
     const have = await ShopifyOrder.estimatedDocumentCount();
     const cursor = await getSetting(CURSOR_KEY);
-    const doFull = full || !have || !cursor;
+    // Orders saved before the marketing fields existed get one full reload, then incremental syncing resumes.
+    const needsMarketing = have > 0 && (await getSetting(ATTRS_KEY)) !== ATTRS_V;
+    const doFull = full || !have || !cursor || needsMarketing;
     state.mode = doFull ? 'full' : 'incremental';
     const onPage = async (nodes) => { const r = await upsertNodes(nodes); saved += r.saved; newDates += r.newDates; state.progress = saved; };
     if (doFull) await client.pullOrders({ query: null, sortKey: 'CREATED_AT', reverse: true, onPage });
@@ -55,6 +58,7 @@ async function run({ full = false } = {}) {
       const since = new Date(new Date(cursor).getTime() - 5 * 60 * 1000).toISOString(); // small overlap so nothing slips through
       await client.pullOrders({ query: `updated_at:>='${since}'`, sortKey: 'UPDATED_AT', reverse: false, onPage });
     }
+    if (doFull) await putSetting(ATTRS_KEY, ATTRS_V);
     await putSetting(CURSOR_KEY, startedAt.toISOString());
     await putSetting(LAST_KEY, { at: new Date(), ok: true, mode: state.mode, saved, newDates });
     if (newDates > 0) await applyNewDates();

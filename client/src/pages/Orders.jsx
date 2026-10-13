@@ -7,6 +7,26 @@ import { MODES, inr, int } from '../format.js';
 const STATUSES = ['Pending confirmation', 'Cancelled', 'Confirmed', 'In Transit', 'Delivered', 'RTO'];
 const fmtDT = (s) => (s ? new Date(s).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'Asia/Kolkata' }) : 'Undated');
 
+function MarketingSection({ m }) {
+  if (!m || !(m.hasUtm || m.landingPath || m.device)) return null;
+  return (
+    <>
+      <h2 style={{ marginTop: 18 }}>Where it came from</h2>
+      <dl className="kv">
+        <dt>Source</dt><dd>{m.utmSource || '—'}{m.sourceGroup && m.sourceGroup !== m.utmSource && <span className="muted"> · {m.sourceGroup}</span>}</dd>
+        <dt>Campaign</dt><dd style={{ whiteSpace: 'normal' }}>{m.utmCampaign || '—'}</dd>
+        <dt>Ad set</dt><dd style={{ whiteSpace: 'normal' }}>{m.utmMedium || '—'}</dd>
+        <dt>Ad</dt><dd style={{ whiteSpace: 'normal' }}>{m.utmContent || '—'}</dd>
+        {m.utmTerm && <><dt>Term / id</dt><dd>{m.utmTerm}</dd></>}
+        {m.landingPath && <><dt>Landing page</dt><dd style={{ whiteSpace: 'normal' }}>{m.landingPath}</dd></>}
+        {m.device && <><dt>Device</dt><dd>{[m.device, m.inApp].filter(Boolean).join(' · ')}</dd></>}
+        {m.checkoutPayment && <><dt>Chosen at checkout</dt><dd>{m.checkoutPayment}</dd></>}
+        {m.additionalCharge > 0 && <><dt>Additional charge</dt><dd>{inr(m.additionalCharge)}</dd></>}
+      </dl>
+    </>
+  );
+}
+
 function ShopifySection({ s, reveal, onReveal }) {
   if (!s) return null;
   if (!s.found) {
@@ -40,6 +60,7 @@ function ShopifySection({ s, reveal, onReveal }) {
         {s.shipping != null && <><dt>Shipping</dt><dd>{inr(s.shipping)}</dd></>}
         {s.total != null && <><dt>Total (Shopify)</dt><dd><b>{inr(s.total)}</b></dd></>}
       </dl>
+      <MarketingSection m={s.marketing} />
       <h2 style={{ marginTop: 18 }}>Customer (Shopify)</h2>
       <dl className="kv">
         <dt>Name</dt><dd>{c.name || '—'}</dd>

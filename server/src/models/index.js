@@ -52,6 +52,13 @@ const ShopifyOrder = mongoose.model('ShopifyOrder', new Schema({
   address: { name: String, line1: String, line2: String, city: String, state: String, zip: String, country: String, phone: String },
   items: [{ _id: false, title: String, variantTitle: String, sku: String, quantity: Number, orderedQuantity: Number, price: Number }],
   itemsSummary: String,
+  marketing: {
+    utmSource: String, utmMedium: String, utmCampaign: String, utmTerm: String, utmContent: String, sourceGroup: String,
+    landingPath: String, landingProduct: String, checkoutPayment: String, additionalCharge: Number,
+    device: String, inApp: String, hasUtm: Boolean,
+    extra: [{ _id: false, key: String, value: String }],
+  },
+  attrsV: Number, // version of the marketing mapping this document was written with
   syncedAt: Date,
 }, { minimize: false }));
 

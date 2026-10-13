@@ -133,3 +133,63 @@ test('a 401 forces a fresh token and retries once', async () => {
   await client.ping();
   assert.equal(tokens, 2);
 });
+
+// ---- marketing (Shopify "Additional details" = order custom attributes) ----
+const { normalizeMarketing } = require('../src/lib/shopifyMap');
+const { computeCampaigns, NONE } = require('../src/lib/campaigns');
+
+const attrs1874 = [
+  { key: 'additional_charge', value: '0.0' },
+  { key: 'user_agent', value: 'Mozilla/5.0 (Linux; Android 10; vivo 1804 Build/QP1A.190711.020) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/153.0.8010.38 Mobile Safari/537.36 [FB_IAB/FB4A;FBAV/580.0.0.51.74;IABMV/1;]' },
+  { key: 'utm_source', value: 'fb' },
+  { key: 'utm_medium', value: 'Aquarius-Kumbh | Offer | AI2.5L+(Ex) | INT-Astro | 01/10' },
+  { key: 'utm_campaign', value: 'Aquarius-Kumbh | Bracelet | ABO | 26/09' },
+  { key: 'utm_term', value: '23859660124540798' },
+  { key: 'utm_content', value: 'Aquarius_V2_Offer - Thank you jitna pyar | 01/30' },
+  { key: 'ipv4_address', value: '157.35.15.4' },
+  { key: 'paymentMethod', value: 'COD' },
+  { key: 'landing_page_url', value: 'https://shopmysoul.com/products/aquarius-zodiac-bracelet-amethyst-lapis-lazuli-12?_pos=1&utm_source=fb' },
+];
+
+test('marketing: order #1874 attributes map to campaign, ad set, ad, device', () => {
+  const m = normalizeMarketing(attrs1874);
+  assert.equal(m.utmCampaign, 'Aquarius-Kumbh | Bracelet | ABO | 26/09');
+  assert.equal(m.utmMedium, 'Aquarius-Kumbh | Offer | AI2.5L+(Ex) | INT-Astro | 01/10');
+  assert.equal(m.utmContent, 'Aquarius_V2_Offer - Thank you jitna pyar | 01/30');
+  assert.equal(m.sourceGroup, 'Meta');
+  assert.equal(m.device, 'Android');
+  assert.equal(m.inApp, 'Facebook app');
+  assert.equal(m.landingProduct, 'aquarius-zodiac-bracelet-amethyst-lapis-lazuli-12');
+  assert.equal(m.checkoutPayment, 'COD');
+  assert.equal(m.additionalCharge, 0);
+  assert.equal(m.hasUtm, true);
+  assert.deepEqual(m.extra, []);
+  assert.ok(!JSON.stringify(m).includes('157.35.15.4'), 'IP address is not stored');
+  assert.ok(!JSON.stringify(m).includes('vivo'), 'raw browser string is not stored');
+});
+
+test('marketing: UTM falls back to the landing page address, and missing data is harmless', () => {
+  const m = normalizeMarketing([{ key: 'landing_page_url', value: 'https://x.com/products/p?utm_source=google&utm_campaign=Brand' }, { key: 'gift', value: 'yes' }]);
+  assert.equal(m.utmCampaign, 'Brand'); assert.equal(m.sourceGroup, 'Google'); assert.deepEqual(m.extra, [{ key: 'gift', value: 'yes' }]);
+  const none = normalizeMarketing(undefined);
+  assert.equal(none.hasUtm, false); assert.equal(none.utmCampaign, '');
+  assert.equal(normalizeOrder(node(5, { customAttributes: attrs1874 })).marketing.utmSource, 'fb');
+  assert.equal(normalizeOrder(node(6)).marketing.hasUtm, false);
+});
+
+test('campaigns: groups sheet outcomes by UTM, unattributed kept apart, parent campaign shown for ad sets', () => {
+  const o = (orderId, p) => ({ orderId, amount: 1000, paymentMode: 'COD', confirmed: 'Yes', dispatched: true, finalStatus: 'Delivered', ndr: false, ...p });
+  const orders = [o(1), o(2, { finalStatus: 'RTO' }), o(3, { paymentMode: 'Prepaid' }), o(4, { confirmed: 'Cancel', finalStatus: 'Cancelled', dispatched: false }), o(5)];
+  const mk = new Map([
+    [1, normalizeMarketing(attrs1874)], [2, normalizeMarketing(attrs1874)], [3, normalizeMarketing([{ key: 'utm_campaign', value: 'Leo | Bracelet' }])],
+    [4, normalizeMarketing([])],
+  ]);
+  const r = computeCampaigns(orders, mk, 'campaign');
+  assert.equal(r.total, 5); assert.equal(r.withUtm, 3); assert.equal(r.matched, 4);
+  const a = r.rows.find((x) => x.key.startsWith('Aquarius'));
+  assert.equal(a.orders, 2); assert.equal(a.delivered, 1); assert.equal(a.rtoCount, 1); assert.equal(a.rto.v, 50); assert.equal(a.netRevenue, 1000);
+  assert.equal(r.rows[r.rows.length - 1].key, NONE); assert.equal(r.rows[r.rows.length - 1].orders, 2); // #4 has no UTM, #5 has no Shopify match
+  const t = computeCampaigns(orders, mk, 'theme');
+  assert.ok(t.rows.find((x) => x.key === 'Aquarius-Kumbh') && t.rows.find((x) => x.key === 'Leo'));
+  assert.equal(computeCampaigns(orders, mk, 'adset').rows[0].campaign, 'Aquarius-Kumbh | Bracelet | ABO | 26/09');
+});
