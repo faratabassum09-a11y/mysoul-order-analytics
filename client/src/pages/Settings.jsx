@@ -142,6 +142,63 @@ function ShopifyCard() {
   );
 }
 
+function ShipwayCard() {
+  const { data, error, loading, reload } = useApi('/shipway/status');
+  const [busy, setBusy] = useState('');
+  const [msg, setMsg] = useState(null);
+  const [result, setResult] = useState(null);
+  const running = !!(data && data.running);
+  useEffect(() => { if (!running) return undefined; const t = setInterval(reload, 4000); return () => clearInterval(t); }, [running]); // eslint-disable-line react-hooks/exhaustive-deps
+  const start = async (all) => {
+    setBusy('sync'); setMsg(null);
+    try {
+      await api.post(`/shipway/sync${all ? '?all=1' : ''}`);
+      setMsg({ ok: true, text: all ? 'Checking every order in Shipway. This can take several minutes. You can leave this page.' : 'Checking Shipway for orders that can still change…' });
+      reload();
+    } catch (e) { setMsg({ ok: false, text: e.message }); } finally { setBusy(''); }
+  };
+  const test = async () => {
+    setBusy('test'); setMsg(null); setResult(null);
+    try { setResult(await api.post('/shipway/test')); } catch (e) { setMsg({ ok: false, text: e.message }); } finally { setBusy(''); }
+  };
+  const groupName = (k) => ((data && data.groups.find((g) => g[0] === k)) || [k, k])[1];
+  return (
+    <div className="card">
+      <h2>Shipway (dispatch and tracking status)</h2>
+      <Loading error={error} loading={loading}>
+        {data && !data.configured && (
+          <div className="banner err">
+            <b>Not connected yet.</b> On the server, add <code>SHIPWAY_USERNAME</code> (your Shipway login email) and <code>SHIPWAY_LICENSE_KEY</code> (Shipway, Profile, Manage profile; this is not the password), then redeploy.
+          </div>
+        )}
+        {data && data.configured && (
+          <>
+            <p className="muted">
+              Account {data.username} · {data.tracked} orders tracked{Object.keys(data.byGroup).length > 0 && <> ({Object.entries(data.byGroup).map(([k, n]) => `${n} ${groupName(k).toLowerCase()}`).join(', ')})</>} · {data.intervalMin ? `refreshes every ${data.intervalMin} min` : 'refreshes by button only'}
+              {data.last && <> · last run {when(data.last.at)}{data.last.ok ? ` (${data.last.checked} checked, ${data.last.changed} changed, ${data.last.missing} not in Shipway)` : ''}</>}
+            </p>
+            {running && <div className="banner">Checking Shipway… {data.progress} of {data.total} orders.</div>}
+            {data.last && !data.last.ok && <div className="banner err">Last Shipway run failed: {data.last.error}</div>}
+            <div className="filters">
+              <button className="btn ghost" disabled={!!busy || running} onClick={test}>{busy === 'test' ? 'Testing…' : 'Test connection'}</button>
+              <button className="btn ghost" disabled={!!busy || running} onClick={() => start(false)}>Sync now</button>
+              <button className="btn ghost" disabled={!!busy || running} onClick={() => start(true)}>Check all orders</button>
+            </div>
+            {result && (
+              <div className={`banner ${result.ok ? '' : 'err'}`}>
+                <b>{result.ok ? 'Connected.' : 'Login works, but something needs fixing.'}</b>
+                {result.sample && <> Order #{result.sample.orderId} found as "{result.sample.shipwayOrderId}": {result.sample.status}{result.sample.carrier ? `, ${result.sample.carrier}` : ''}{result.sample.awb ? `, AWB ${result.sample.awb}` : ''}.</>}
+                {result.problems.length > 0 && <ul className="log">{result.problems.map((p, i) => <li key={i}>{p}</li>)}</ul>}
+              </div>
+            )}
+          </>
+        )}
+        {msg && <div className={`banner ${msg.ok ? '' : 'err'}`}>{msg.text}</div>}
+      </Loading>
+    </div>
+  );
+}
+
 function SheetCard({ onChanged }) {
   const { data, error, loading, reload } = useApi('/settings/sheet');
   const [form, setForm] = useState(null);
@@ -235,11 +292,12 @@ export default function Settings() {
   return (
     <div className="page">
       <h1>Settings</h1>
-      <p className="lede">Sync the sheet, connect Shopify, backfill missing dates and maintain the reason buckets.</p>
+      <p className="lede">Sync the sheet, connect Shopify and Shipway, backfill missing dates and maintain the reason buckets.</p>
       <div className="two">
         <div style={{ display: 'grid', gap: 14, alignContent: 'start' }}>
           <SheetCard onChanged={() => setV((n) => n + 1)} />
           <ShopifyCard />
+          <ShipwayCard />
           <SyncCard key={v} />
         </div>
         <ReasonMap />

@@ -12,6 +12,13 @@ const HINT = {
   theme: 'First part of the campaign name, before the first "|"', source: 'utm_source, Meta grouped together', landing: 'Product page the customer landed on', device: 'From the browser string in the order',
 };
 
+const WHY = {
+  no_shopify_orders: 'No orders have been pulled from Shopify. Open Settings, Shopify, check it says connected, press Test connection, then Load all orders.',
+  not_reloaded: 'Shopify orders were stored before the UTM fields existed. Open Settings, Shopify, and press Load all orders once.',
+  no_match: 'Shopify orders are stored, but none are from this window. Try a longer window, and check Shopify is up to date (Settings, Sync now).',
+  no_utm_on_orders: 'These orders were found in Shopify but carry no UTM fields. Press Test connection in Settings to see what Shopify sends for the newest order.',
+};
+
 export default function Campaigns() {
   const f = useFilters();
   const [by, setBy] = useState('campaign');
@@ -21,7 +28,6 @@ export default function Campaigns() {
   const rows = data ? data.rows.filter((r) => r.unattributed || r.orders >= min) : [];
   const hidden = data ? data.rows.length - rows.length : 0;
   const t = data && data.totals;
-  const notLoaded = data && data.shopifyOrders > 0 && data.marketingLoaded === 0;
   return (
     <>
       <FilterBar range={data && data.range} />
@@ -36,8 +42,9 @@ export default function Campaigns() {
         <Loading error={error} loading={loading || !f.ready}>
           {data && (
             <>
-              {notLoaded && <div className="banner warn">Shopify has not loaded the UTM details yet. Open Settings, Shopify, and press <b>Load all orders</b>. It also happens automatically on the next sync.</div>}
-              {!notLoaded && data.total > 0 && (
+              {data.why && <div className="banner warn"><b>No UTM data found.</b> {WHY[data.why]}{data.shopifyRunning && <> A Shopify sync is running right now, so check again in a few minutes.</>}
+                <div className="muted" style={{ marginTop: 6, fontSize: 12 }}>{int(data.total)} orders in this window · {int(data.matched)} found in Shopify · {int(data.shopifyOrders)} Shopify orders stored · {int(data.marketingLoaded)} of them with UTM fields loaded{data.shopifyLast ? ` · last Shopify sync ${data.shopifyLast.ok ? 'ok' : 'failed'}${data.shopifyLast.error ? `: ${data.shopifyLast.error}` : ''}` : ''}</div></div>}
+              {!data.why && data.total > 0 && (
                 <div className={`banner${data.coverage < 70 ? ' warn' : ''}`}>
                   <b>{pct(data.coverage, 0)}</b> of the {int(data.total)} orders in this window carry UTM data ({int(data.withUtm)}). The rest are direct visits, older than Shopify's 60-day limit, or not yet synced.
                 </div>

@@ -112,9 +112,10 @@ async function test() {
   let sample = null;
   try {
     const n = await client.latestOrder();
-    if (n) { const d = normalizeOrder(n); sample = { name: n.name, items: d.items.length, hasCustomerName: !!d.customer.name, hasEmail: !!d.customer.email, hasAddress: !!d.address.city }; }
+    if (n) { const d = normalizeOrder(n); sample = { name: n.name, items: d.items.length, hasCustomerName: !!d.customer.name, hasEmail: !!d.customer.email, hasAddress: !!d.address.city, attributes: (n.customAttributes || []).length, hasUtm: d.marketing.hasUtm }; }
   } catch (e) { problems.push(e.message); }
   if (sample && sample.items && !sample.hasCustomerName && !sample.hasEmail) problems.push('The newest order came back without any customer details. Customer data access may not be enabled for this app (see the README, Shopify section).');
+  if (sample && !sample.hasUtm) problems.push(`The newest order (${sample.name}) came back with ${sample.attributes} additional-detail fields and no UTM values. If the Shopify admin shows UTM fields for it, tell the developer; otherwise that order simply had no ad click.`);
   return { ok: problems.length === 0, shop, scopes, allOrdersScope: has('read_all_orders'), sample, problems };
 }
 

@@ -81,6 +81,25 @@ There are two ways to give the server access. Which one applies depends on wheth
 - The access token and customer details are stored in your own MongoDB. Keep `ACCESS_PASSWORD` set.
 - The Shopify API version is set by `SHOPIFY_API_VERSION` (default `2026-04`). Shopify retires old versions after about a year.
 
+## Shipway: dispatch and tracking status per order
+
+Orders are dispatched from Shipway, so every order has **two statuses, shown separately**: the one from the sheet ("Sheet status") and the one from Shipway ("Shipway status"). Nothing is merged and the Overview, Trends and Payment mode numbers still come from the sheet. In **Orders**, both appear as columns, the Shipway one can be filtered (including "Not in Shipway"), and the order drawer shows courier, AWB, last update and the status changes the dashboard has seen. The CSV export gains Shipway status, courier and AWB.
+
+**Setup (2 minutes)**
+1. Shipway, **Profile, Manage profile**: copy the **licence key**. The API uses the licence key, not the login password.
+2. On the server (Render, Environment) set `SHIPWAY_USERNAME` (the Shipway login email) and `SHIPWAY_LICENSE_KEY`. Never put them in git or in a chat.
+3. Redeploy. In **Settings, Shipway**, press **Test connection**, then **Check all orders**.
+
+**How it works.** For each order the server calls Shipway's *Order Shipment Details* (`/api/getOrderShipmentDetails`) with the order number. Newest orders go first. Delivered, RTO-delivered, cancelled and lost shipments are not asked again; moving shipments are re-checked after 30 minutes, orders Shipway does not know yet after 3 hours (for 30 days). The timer runs every `SHIPWAY_SYNC_INTERVAL_MIN` minutes (default 10); opening an order refreshes it if its saved status is more than 10 minutes old.
+
+**Order numbers.** Shipway must hold the order under the number the dashboard uses (1874 or #1874). `SHIPWAY_ORDER_ID_FORMAT=auto` (default) tries both and remembers which works. **Test connection** looks up a recent order and says which form matched; if Shipway has none of the newest orders, it says so.
+
+**Good to know**
+- Shipway's reply carries only the latest status, so the "changes seen" list starts from the moment the dashboard first sees each order.
+- A lookup that comes back empty never erases a status already saved.
+- Customer name and phone in Shipway's reply are not stored.
+- Not used: Shipway webhooks. Their payload is not in the public docs, so polling is used instead.
+
 ## Dates: first job
 
 Order date comes from, in order: Order Sheet column A (year set to 2026, rolled back a year if it would land in the future) → OrdersMaster Timestamp → Shopify orders CSV (Settings → Backfill dates). Orders with none are **undated**: counted in All time, left out of dated windows, and the count is shown at the top of every screen. Upload the Shopify export once to fill #1023 to #1202.

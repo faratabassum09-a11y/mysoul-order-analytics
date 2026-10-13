@@ -5,6 +5,9 @@ import { FilterBar, Loading, StatusTag } from '../components.jsx';
 import { MODES, inr, int } from '../format.js';
 
 const STATUSES = ['Pending confirmation', 'Cancelled', 'Confirmed', 'In Transit', 'Delivered', 'RTO'];
+const SHIP_GROUPS = [['delivered', 'Delivered'], ['transit', 'In transit'], ['ndr', 'Undelivered / NDR'], ['rto', 'RTO'], ['cancelled', 'Cancelled'], ['lost', 'Lost'], ['reverse', 'Reverse'], ['other', 'Other'], ['none', 'Not in Shipway']];
+const SHIP_TAG = { delivered: 'Delivered', transit: 'In', ndr: 'Pending', rto: 'RTO', cancelled: 'RTO', lost: 'RTO' };
+const ShipwayTag = ({ s }) => (s ? <span className={`tag ${SHIP_TAG[s.group] || ''}`} title={s.code ? `Shipway code ${s.code}` : ''}>{s.status}</span> : <span className="muted">—</span>);
 const fmtDT = (s) => (s ? new Date(s).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'Asia/Kolkata' }) : 'Undated');
 
 function MarketingSection({ m }) {
@@ -23,6 +26,37 @@ function MarketingSection({ m }) {
         {m.checkoutPayment && <><dt>Chosen at checkout</dt><dd>{m.checkoutPayment}</dd></>}
         {m.additionalCharge > 0 && <><dt>Additional charge</dt><dd>{inr(m.additionalCharge)}</dd></>}
       </dl>
+    </>
+  );
+}
+
+function ShipwaySection({ s }) {
+  if (!s) return null;
+  if (!s.found) {
+    const text = s.reason === 'not_configured' ? 'Shipway is not connected yet. Add the Shipway login in the server settings to see dispatch status here.'
+      : s.reason === 'no_id' ? 'This row has no order number, so it cannot be matched in Shipway.'
+      : s.reason === 'error' ? `Could not load this order from Shipway: ${s.error}`
+      : 'Shipway has no shipment for this order yet. Orders show up here once they are dispatched from Shipway.';
+    return <div className="banner" style={{ marginTop: 14 }}>{text}</div>;
+  }
+  return (
+    <>
+      <h2 style={{ marginTop: 18 }}>Dispatch (Shipway)</h2>
+      <dl className="kv">
+        <dt>Shipway status</dt><dd><ShipwayTag s={s} /></dd>
+        <dt>Courier</dt><dd>{s.carrier || '—'}</dd>
+        <dt>AWB</dt><dd>{s.awb || '—'}</dd>
+        {s.from && <><dt>From</dt><dd>{s.from}</dd></>}
+        {s.to && <><dt>To</dt><dd>{s.to}</dd></>}
+        {s.pickupDate && <><dt>Picked up</dt><dd>{s.pickupDate}</dd></>}
+        <dt>Last update</dt><dd>{s.statusAt ? fmtDT(s.statusAt) : s.statusTime || '—'}{s.checkedAt && <span className="muted"> · checked {fmtDT(s.checkedAt)}</span>}</dd>
+      </dl>
+      {s.history && s.history.length > 1 && (
+        <>
+          <p className="muted" style={{ margin: '0 0 4px' }}>Changes seen by this dashboard</p>
+          <ul className="log">{[...s.history].reverse().map((h, i) => <li key={i}>{h.status}{h.at && <span className="muted"> · {fmtDT(h.at)}</span>}</li>)}</ul>
+        </>
+      )}
     </>
   );
 }
@@ -96,7 +130,10 @@ export function OrderDrawer({ sheetRow, onClose }) {
         <Loading error={error} loading={loading && !data}>
           {data && (
             <>
-              <p>{data.excluded ? <span className="tag RTO">Excluded: {data.excludedReason}</span> : <StatusTag s={data.finalStatus} />} {data.ndr && <span className="tag Pending">NDR</span>}</p>
+              <p>
+                {data.excluded ? <span className="tag RTO">Excluded: {data.excludedReason}</span> : <><span className="muted">Sheet status </span><StatusTag s={data.finalStatus} /></>} {data.ndr && <span className="tag Pending">NDR</span>}
+                {data.shipway && data.shipway.found && <> <span className="muted" style={{ marginLeft: 8 }}>Shipway status </span><ShipwayTag s={data.shipway} /></>}
+              </p>
               <dl className="kv">
                 <dt>Order date</dt><dd>{fmtDT(data.orderDate)} {data.dateSource && <span className="muted">· from {data.dateSource}</span>}</dd>
                 <dt>Name</dt><dd>{data.name || '—'}</dd>
@@ -107,6 +144,7 @@ export function OrderDrawer({ sheetRow, onClose }) {
                 <dt>Phone / email</dt>
                 <dd>{reveal ? (data.phoneShown || data.emailShown || '—') : <button className="btn ghost" onClick={() => setReveal(true)}>Reveal</button>}</dd>
               </dl>
+              <ShipwaySection s={data.shipway} />
               <ShopifySection s={data.shopify} reveal={reveal} onReveal={() => setReveal(true)} />
               {data.conflicts.length > 0 && <div className="banner warn" style={{ marginTop: 14 }}><b>Conflicts:</b> {data.conflicts.join('; ')}</div>}
               <h2>Original sheet row {data.sheetRow}</h2>
@@ -126,14 +164,15 @@ export default function Orders() {
   const [status, setStatus] = useState('');
   const [mode, setMode] = useState('');
   const [ndr, setNdr] = useState('');
+  const [ship, setShip] = useState('');
   const [q, setQ] = useState('');
   const [qNow, setQNow] = useState('');
   const [page, setPage] = useState(1);
   const [open, setOpen] = useState(null);
   const [exporting, setExporting] = useState(false);
   useEffect(() => { const t = setTimeout(() => { setQNow(q); setPage(1); }, 300); return () => clearTimeout(t); }, [q]);
-  useEffect(() => setPage(1), [status, mode, ndr, f.window, f.from, f.to]);
-  const params = { ...f.params, status, mode, ndr, q: qNow };
+  useEffect(() => setPage(1), [status, mode, ndr, ship, f.window, f.from, f.to]);
+  const params = { ...f.params, status, mode, ndr, shipway: ship, q: qNow };
   const { data, error, loading } = useApi('/orders', { ...params, page, limit: 50 }, f.ready);
   const pages = data ? Math.max(1, Math.ceil(data.total / data.limit)) : 1;
   const exportCsv = async () => { setExporting(true); try { await api.download('/orders/export.csv', params, 'orders.csv'); } finally { setExporting(false); } };
@@ -142,11 +181,12 @@ export default function Orders() {
       <FilterBar range={data && data.range} />
       <div className="page">
         <h1>Orders</h1>
-        <p className="lede">Click an order to see its items, customer details from Shopify, the original sheet row and what the cleaning step changed.</p>
+        <p className="lede">Two statuses per order: the one from the sheet and the one from Shipway, shown separately. Click an order to see its items, customer details, Shipway tracking, the original sheet row and what the cleaning step changed.</p>
         <div className="filters">
           <input type="search" placeholder="Order ID or name" value={q} onChange={(e) => setQ(e.target.value)} />
-          <select value={status} onChange={(e) => setStatus(e.target.value)} aria-label="Status"><option value="">All statuses</option>{STATUSES.map((s) => <option key={s}>{s}</option>)}</select>
+          <select value={status} onChange={(e) => setStatus(e.target.value)} aria-label="Sheet status"><option value="">All sheet statuses</option>{STATUSES.map((s) => <option key={s}>{s}</option>)}</select>
           <select value={mode} onChange={(e) => setMode(e.target.value)} aria-label="Payment mode"><option value="">All payment modes</option>{[...MODES, 'Unknown'].map((m) => <option key={m}>{m}</option>)}</select>
+          <select value={ship} onChange={(e) => setShip(e.target.value)} aria-label="Shipway status"><option value="">All Shipway statuses</option>{SHIP_GROUPS.map(([k, l]) => <option key={k} value={k}>{l}</option>)}</select>
           <select value={ndr} onChange={(e) => setNdr(e.target.value)} aria-label="NDR"><option value="">NDR: any</option><option value="yes">NDR: yes</option><option value="no">NDR: no</option></select>
           <span className="grow" />
           <button className="btn ghost" onClick={exportCsv} disabled={exporting}>{exporting ? 'Exporting…' : 'Export CSV'}</button>
@@ -157,12 +197,12 @@ export default function Orders() {
               <>
                 <div className="tablewrap">
                   <table>
-                    <thead><tr><th>Order</th><th>Date (IST)</th><th>Name</th><th className="num">Amount</th><th>Mode</th><th>Status</th><th>NDR</th><th>City</th><th>Items</th></tr></thead>
+                    <thead><tr><th>Order</th><th>Date (IST)</th><th>Name</th><th className="num">Amount</th><th>Mode</th><th>Sheet status</th><th>Shipway status</th><th>NDR</th><th>City</th><th>Items</th></tr></thead>
                     <tbody>
                       {data.rows.map((o) => (
                         <tr key={o.sheetRow} className="click" onClick={() => setOpen(o.sheetRow)} tabIndex={0} onKeyDown={(e) => e.key === 'Enter' && setOpen(o.sheetRow)}>
                           <td>#{o.orderId}</td><td>{fmtDT(o.orderDate)}</td><td>{o.name}</td><td className="num">{inr(o.amount)}</td>
-                          <td>{o.paymentMode}</td><td><StatusTag s={o.finalStatus} /></td><td>{o.ndr ? 'Yes' : ''}</td><td>{o.city || ''}</td><td title={o.items || o.product}>{o.items || o.product}</td>
+                          <td>{o.paymentMode}</td><td><StatusTag s={o.finalStatus} /></td><td title={o.shipway ? [o.shipway.carrier, o.shipway.awb].filter(Boolean).join(' · ') : ''}><ShipwayTag s={o.shipway} /></td><td>{o.ndr ? 'Yes' : ''}</td><td>{o.city || ''}</td><td title={o.items || o.product}>{o.items || o.product}</td>
                         </tr>
                       ))}
                     </tbody>

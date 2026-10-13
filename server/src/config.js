@@ -30,6 +30,16 @@ module.exports = {
     // How often to pull new and changed orders (0 = only after sheet changes and by button).
     syncIntervalMin: env.SHOPIFY_SYNC_INTERVAL_MIN === undefined || env.SHOPIFY_SYNC_INTERVAL_MIN === '' ? 2 : Math.max(0, Number(env.SHOPIFY_SYNC_INTERVAL_MIN) || 0),
   },
+  // Shipway (dispatch and tracking). The licence key is under Shipway > Profile > Manage profile; it is NOT the login password.
+  shipway: {
+    username: (env.SHIPWAY_USERNAME || '').trim(), // the Shipway login email
+    licenseKey: (env.SHIPWAY_LICENSE_KEY || '').trim(),
+    apiBase: (env.SHIPWAY_API_BASE || 'https://shipway.in').trim().replace(/\/+$/, ''),
+    // How the order number was pushed to Shipway: "1874", "#1874", or auto (try both, remember the one that works).
+    orderIdFormat: ['number', 'hash', 'auto'].includes((env.SHIPWAY_ORDER_ID_FORMAT || '').toLowerCase()) ? env.SHIPWAY_ORDER_ID_FORMAT.toLowerCase() : 'auto',
+    // How often to refresh tracking status (0 = only by button).
+    syncIntervalMin: env.SHIPWAY_SYNC_INTERVAL_MIN === undefined || env.SHIPWAY_SYNC_INTERVAL_MIN === '' ? 10 : Math.max(0, Number(env.SHIPWAY_SYNC_INTERVAL_MIN) || 0),
+  },
   // Public address of this server (used for the Shopify redirect URL). Render sets RENDER_EXTERNAL_URL by itself.
   publicUrl: (env.PUBLIC_URL || env.RENDER_EXTERNAL_URL || '').trim(),
   // Secret for the external trigger URL /api/cron/sync (cron-job.org, UptimeRobot, GitHub Actions).

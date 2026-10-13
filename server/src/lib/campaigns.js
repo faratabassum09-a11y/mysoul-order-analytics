@@ -55,4 +55,13 @@ function computeCampaigns(orders, marketingById, by = 'campaign') {
   };
 }
 
-module.exports = { computeCampaigns, NONE, BY };
+// Why is the table empty? One answer, in order of what to fix first.
+function diagnose({ total, matched, withUtm, shopifyOrders, marketingLoaded }) {
+  if (!total || withUtm > 0) return null;
+  if (!shopifyOrders) return 'no_shopify_orders'; // Shopify not connected, or nothing pulled yet
+  if (!marketingLoaded) return 'not_reloaded'; // orders were saved before the UTM fields existed
+  if (!matched) return 'no_match'; // Shopify has orders, but none of this window's
+  return 'no_utm_on_orders'; // orders matched, Shopify sent no UTM attributes
+}
+
+module.exports = { computeCampaigns, diagnose, NONE, BY };
