@@ -27,20 +27,23 @@ async function post(path, body) {
       });
     } catch (e) { lastErr = new ShipwayError(`Could not reach Shipway: ${e.message}`); await sleep(1000 * (attempt + 1)); continue; }
     if (res.status === 429 || res.status >= 500) { lastErr = new ShipwayError(`Shipway is busy (HTTP ${res.status})`, { status: res.status }); await sleep(2000 * (attempt + 1)); continue; }
-    const data = await res.json().catch(() => null);
-    if (res.status === 401 || res.status === 403) throw new ShipwayError('Shipway rejected the login. Check SHIPWAY_USERNAME and SHIPWAY_LICENSE_KEY (the licence key, not the password).', { status: res.status, code: 'auth' });
-    if (!data) throw new ShipwayError(`Shipway sent an unreadable reply (HTTP ${res.status})`, { status: res.status });
+    let raw = ''; let data = null;
+    if (typeof res.text === 'function') { raw = await res.text().catch(() => ''); try { data = JSON.parse(raw); } catch { data = null; } }
+    else data = await res.json().catch(() => null);
+    const detail = (data && (data.msg || data.message)) || raw.replace(/\s+/g, ' ').slice(0, 160);
+    if (res.status === 401 || res.status === 403) throw new ShipwayError(`Shipway rejected the login (HTTP ${res.status} from ${apiBase}). Shipway said: ${detail || 'nothing'}. Check SHIPWAY_USERNAME and SHIPWAY_LICENSE_KEY (the licence key, not the password).`, { status: res.status, code: 'auth' });
+    if (!data) throw new ShipwayError(`Shipway sent an unreadable reply (HTTP ${res.status} from ${apiBase}): ${detail || 'empty'}`, { status: res.status });
     return data;
   }
   throw lastErr || new ShipwayError('Shipway request failed');
 }
 
 const isAuthFailure = (d) => /invalid (email|user|username|password|licen)/i.test(String(d.msg || d.message || ''));
-const authError = () => new ShipwayError('Shipway rejected the login. Check SHIPWAY_USERNAME and SHIPWAY_LICENSE_KEY (the licence key, not the password).', { status: 401, code: 'auth' });
+const authError = (d) => new ShipwayError(`Shipway rejected the login${d ? ` (Shipway said: ${String(d.msg || d.message || d.status || 'no message')})` : ''}. Check SHIPWAY_USERNAME and SHIPWAY_LICENSE_KEY (the licence key, not the password).`, { status: 401, code: 'auth' });
 
 async function authenticate() {
   const d = await post('authenticateUser', {});
-  if (String(d.status).toLowerCase() !== 'success') throw authError();
+  if (String(d.status).toLowerCase() !== 'success') throw authError(d);
   return { ok: true, userId: d.user_id };
 }
 
@@ -61,7 +64,7 @@ async function getOrderShipmentDetails(orderId) {
       if (cfg.shipway.orderIdFormat === 'auto') preferred = id.startsWith('#') ? 'hash' : 'number';
       return { found: true, id, response: d.response };
     }
-    if (isAuthFailure(d)) throw authError();
+    if (isAuthFailure(d)) throw authError(d);
     message = String(d.msg || d.message || 'No shipment found');
   }
   return { found: false, message };
