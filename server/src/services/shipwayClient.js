@@ -35,7 +35,7 @@ async function call(method, path, { query, body } = {}) {
     if (typeof res.text === 'function') { raw = await res.text().catch(() => ''); try { data = JSON.parse(raw); } catch { data = null; } }
     else data = await res.json().catch(() => null);
     const detail = (data && (data.msg || data.message || data.error)) || raw.replace(/\s+/g, ' ').slice(0, 160);
-    if (res.status === 401 || res.status === 403) throw new ShipwayError(`Shipway rejected the login (HTTP ${res.status} from ${apiBase}). Shipway said: ${typeof detail === 'string' ? detail : JSON.stringify(detail) || 'nothing'}. Check SHIPWAY_USERNAME and SHIPWAY_LICENSE_KEY (the licence key, not the password).`, { status: res.status, code: 'auth' });
+      if (res.status === 401 || res.status === 403) throw new ShipwayError(`Shipway rejected the login (HTTP ${res.status} from ${apiBase}). Shipway said: ${typeof detail === 'string' ? detail : JSON.stringify(detail) || 'nothing'}. Check SHIPWAY_USERNAME and SHIPWAY_LICENSE_KEY (the licence key, not the password). [key check: length ${licenseKey.length}, char24=${licenseKey.charCodeAt(23)}, char31=${licenseKey.charCodeAt(30)}, email length ${username.length}]`, { status: res.status, code: 'auth' });
     if (!data) throw new ShipwayError(`Shipway sent an unreadable reply (HTTP ${res.status} from ${apiBase}): ${detail || 'empty'}`, { status: res.status });
     return data;
   }
