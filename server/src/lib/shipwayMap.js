@@ -2,7 +2,8 @@
 // Codes come from the Shipway docs ("Order Shipment Details"). Unknown codes keep Shipway's own wording.
 const CODES = {
   // forward
-  PKP: ['Picked up', 'transit'], INT: ['In transit', 'transit'], OOD: ['Out for delivery', 'transit'], SCH: ['Delivery scheduled', 'transit'],
+  PKP: ['Picked up', 'transit'], INT: ['In transit', 'transit'], OOD: ['Out for delivery', 'transit'], SCH: ['Shipment booked', 'other'],
+  NFI: ['Status pending', 'other'], NFIDS: ['Status pending', 'other'], ONH: ['On hold', 'other'], PKF: ['Pickup failed', 'other'],
   SMD: ['Delivery delayed', 'transit'], DEL: ['Delivered', 'delivered'],
   UND: ['Undelivered', 'ndr'], CNA: ['Consignee unavailable', 'ndr'], CRTA: ['Customer refused', 'ndr'],
   RTO: ['RTO in transit', 'rto'], RTD: ['RTO delivered', 'rto'],
@@ -10,7 +11,8 @@ const CODES = {
   // reverse shipments
   RCAN: ['Reverse cancelled', 'reverse'], RCLO: ['Reverse closed', 'reverse'], RDEL: ['Reverse delivered', 'reverse'], RINT: ['Reverse in transit', 'reverse'],
   ROOP: ['Reverse out for pickup', 'reverse'], RPKP: ['Reverse picked up', 'reverse'], RPSH: ['Reverse pickup scheduled', 'reverse'], RSMD: ['Reverse delayed', 'reverse'],
-  RSCH: ['Reverse scheduled', 'reverse'], ROOD: ['Reverse out for delivery', 'reverse'], RUND: ['Reverse undelivered', 'reverse'], RPEX: ['Reverse pickup exception', 'reverse'],
+  RSCH: ['Reverse scheduled', 'reverse'], PCAN: ['Pickup cancelled', 'reverse'], ROTH: ['Reverse other', 'reverse'], RPF: ['Reverse pickup failed', 'reverse'],
+  ROOD: ['Reverse out for delivery', 'reverse'], RUND: ['Reverse undelivered', 'reverse'], RPEX: ['Reverse pickup exception', 'reverse'],
 };
 const FINAL = new Set(['DEL', 'RTD', 'CAN', 'LOST', 'RDEL', 'RCAN', 'RCLO']);
 const GROUPS = [
