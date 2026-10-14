@@ -34,7 +34,7 @@ module.exports = {
   shipway: {
     username: (env.SHIPWAY_USERNAME || '').trim(), // the Shipway login email
     licenseKey: (env.SHIPWAY_LICENSE_KEY || '').trim(),
-    apiBase: (env.SHIPWAY_API_BASE || 'https://shipway.in').trim().replace(/\/+$/, ''),
+    apiBase: (env.SHIPWAY_API_BASE || 'https://app.shipway.com').trim().replace(/\/+$/, ''),
     // How the order number was pushed to Shipway: "1874", "#1874", or auto (try both, remember the one that works).
     orderIdFormat: ['number', 'hash', 'auto'].includes((env.SHIPWAY_ORDER_ID_FORMAT || '').toLowerCase()) ? env.SHIPWAY_ORDER_ID_FORMAT.toLowerCase() : 'auto',
     // How often to refresh tracking status (0 = only by button).
