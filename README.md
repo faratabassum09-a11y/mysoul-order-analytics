@@ -100,6 +100,36 @@ Orders are dispatched from Shipway, so every order has **two statuses, shown sep
 - Customer name and phone in Shipway's reply are not stored.
 - Not used: Shipway webhooks. Their payload is not in the public docs, so polling is used instead.
 
+## Confirm queue and Dispatch desk (team workflow)
+
+Two screens under **Orders** in the left menu, built for the team's phones.
+
+**First-time setup**
+1. Settings, **Team logins**: create the first **Admin** (with `ACCESS_PASSWORD` set, the dashboard key creates it; with no key set, the very first admin can be created openly, so set a key first). Then add each person with their **own** login and a temporary password; they choose their own at first sign-in. Never share a login: every action is stamped with the person.
+2. Settings, **Confirm queue settings**: what happens after the third unanswered call (auto-cancel or escalate), the date the queue starts from (default: last 7 days), and the **partial payment link** template (for example your Razorpay page, with `{orderId}` and `{amount}` placeholders).
+3. Team members open `https://YOUR-SITE/team` on their phone and sign in. Confirmation and packing roles see only their desk (bottom tabs); admins see the whole dashboard.
+
+**Confirm queue.** Pending orders, oldest first, each with a live timer from the order time: green under 2 h, amber 2 to 4 h, red after 4 h (the timer uses the server clock, so a wrong phone clock cannot change the colour). One tap each: **Confirmed**, **Partial pay** (asks how much was paid), **Cancel** (a reason from a fixed list is required), **No answer** (attempt 1, 2, 3 with a 30 minute gap; the third either cancels automatically or escalates, per Settings). Call, WhatsApp and Payment link buttons log themselves; phone numbers are only sent to the browser when one of these is tapped. There is no free-text field anywhere.
+
+**Dispatch desk.** An order enters it when confirmed (or converted to partial pay) in the queue. Three sections, each planned for **24 h after confirmation**:
+1. **Print slip**: tap *Slip printed*, then *Scan, weigh and pack*: scan or type the AWB, enter the weight, take a photo of the sealed box on the scale. **No photo, no Packed**: the server refuses without all three, checks the file really is a photo, checks the AWB against Shipway's AWB for that order when Shipway has one, and refuses an AWB already used on another order. Packing moves the order to Ready for pickup.
+2. **Ready for pickup**: *Mark dispatched* when the courier collects.
+3. **Dispatched**: recent history with an on-time / late marker.
+
+A red **Delayed orders** button appears at the top whenever any confirmed order is past its 24 h plan and not yet dispatched. It lists them oldest first, with a fixed list of delay reasons. Photos are shrunk on the phone before upload (a few hundred KB). Video proof is in the data model but switched off (`FLOW_VIDEO_ENABLED=1` turns on the server side; the app UI for it comes later).
+
+**Log and timeline.** Every action is appended to `FlowEvent` with person, time, previous status, new status and a plain-language line. Nothing edits or deletes these rows. Open any order in **Orders** to see its **Team activity** timeline and **Proof gallery**.
+
+**Overview.** A new **Team performance** block: confirmed within 2 h and 4 h, dispatched within the 24 h plan, share of dispatched orders with a proof photo, open and delayed counts, and a scorecard per person for the confirmation and packing teams.
+
+**Good to know**
+- The Google Sheet is still never written to. Decisions made in the queue are laid over the app's own copy of the order (Confirmed, Cancelled, Partial COD) immediately and after every sheet sync, so the Overview numbers move at once. Only orders the sheet still shows as pending are touched. The sheet's own Order Confirmed column will not change by itself.
+- Dispatch status from Shipway is unchanged and separate: "Dispatched" in the desk means handed to the courier by your team.
+- Photos are stored in MongoDB (survives redeploys on hosts with a temporary disk). Plan on roughly 0.3 to 0.6 MB per order.
+- The Vercel proxy in `client/vercel.json` limits request size, which is why photos are compressed in the browser first.
+- Camera barcode scanning uses the browser's BarcodeDetector (Chrome on Android). On other browsers, type the AWB or use a USB / Bluetooth scanner, which types into the field.
+- Sessions last 12 hours. Switching a person off, or changing their role or password, signs them out at once. Five wrong passwords lock that username and address for 10 minutes. Set `STAFF_TOKEN_SECRET` to pin the signing secret; otherwise one is generated and stored in the database.
+
 ## Dates: first job
 
 Order date comes from, in order: Order Sheet column A (year set to 2026, rolled back a year if it would land in the future) → OrdersMaster Timestamp → Shopify orders CSV (Settings → Backfill dates). Orders with none are **undated**: counted in All time, left out of dated windows, and the count is shown at the top of every screen. Upload the Shopify export once to fill #1023 to #1202.
@@ -123,8 +153,8 @@ Interpretation choices worth knowing:
 ## Layout
 
 ```
-server/src/lib       clean, metrics, windows, reasons, IST time (pure, tested)
+server/src/lib       clean, metrics, windows, reasons, IST time, flow rules, staff auth (pure, tested)
 server/src/services  sheet fetching, sync
 server/src/routes    REST API
-client/src/pages     Overview, Trends, Payment mode, Reasons, Orders, Data issues, Settings
+client/src/pages     Overview, Trends, Payment mode, Reasons, Orders, Confirm queue, Dispatch desk, Data issues, Settings, Team sign-in
 ```

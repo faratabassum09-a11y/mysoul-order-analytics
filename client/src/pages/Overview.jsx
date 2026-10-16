@@ -4,6 +4,7 @@ import { useApi } from '../api.js';
 import { useFilters } from '../filters.jsx';
 import { FilterBar, Funnel, KpiCard, Loading, MixCard, ModeTabs } from '../components.jsx';
 import { KPIS } from '../format.js';
+import TeamPerformance from './TeamPerformance.jsx';
 
 export default function Overview() {
   const f = useFilters();
@@ -36,6 +37,7 @@ export default function Overview() {
                 </div>
                 <Funnel block={data.current[mode] || data.current.All} />
               </div>
+              <TeamPerformance />
             </>
           )}
         </Loading>

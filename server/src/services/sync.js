@@ -1,6 +1,7 @@
 const crypto = require('crypto');
 const cfg = require('../config');
-const { Snapshot, ShopifyDate, Order, SyncRun } = require('../models');
+const { Snapshot, ShopifyDate, Order, SyncRun, OrderFlow } = require('../models');
+const { applyFlowOverlay } = require('../lib/flow');
 const { cleanOrders, parseOrdersMaster, parseShopifyExport } = require('../lib/clean');
 const { fetchSheets } = require('./sources');
 const { getSheetConfig } = require('./sheetConfig');
@@ -39,6 +40,9 @@ async function recleanFromSnapshots(trigger, source, extraWarnings = []) {
   const m = parseOrdersMaster(masterSnap ? masterSnap.rows : null, now);
   const shopify = new Map((await ShopifyDate.find().lean()).map((d) => [d.orderId, d.createdAt]));
   const { orders, summary, warnings } = cleanOrders(orderSnap.rows, { masterDates: m.map, shopifyDates: shopify, now });
+  // What the team decided in the Confirm Queue stays visible after every sheet sync (the sheet itself is never written to).
+  const decided = await OrderFlow.find({ confirmStatus: { $in: ['confirmed', 'partial_pay', 'cancelled'] } }).select('orderId confirmStatus decidedAt decidedByName cancelReason partial').lean();
+  summary.confirmQueueApplied = applyFlowOverlay(orders, decided);
   const allWarnings = [...extraWarnings, ...m.warnings, ...warnings];
   summary.ordersMasterRows = m.map.size;
   summary.shopifyBackfillRows = shopify.size;

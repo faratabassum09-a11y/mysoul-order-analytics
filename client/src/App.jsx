@@ -1,6 +1,11 @@
 import React, { useEffect, useState } from 'react';
 import { NavLink, Navigate, Route, Routes } from 'react-router-dom';
 import { api, getKey, setKey, useApi } from './api.js';
+import { ROLE_LABEL } from './flowUi.js';
+import { useStaff } from './staff.jsx';
+import ConfirmQueue from './pages/ConfirmQueue.jsx';
+import DispatchDesk from './pages/DispatchDesk.jsx';
+import TeamLogin, { ChangePassword, homeFor } from './pages/TeamLogin.jsx';
 import Overview from './pages/Overview.jsx';
 import Trends from './pages/Trends.jsx';
 import PaymentMode from './pages/PaymentMode.jsx';
@@ -10,10 +15,40 @@ import Orders from './pages/Orders.jsx';
 import Issues from './pages/Issues.jsx';
 import Settings from './pages/Settings.jsx';
 
+// Third item 'sub' = an indented entry that lives under the item above it.
 const NAV = [
   ['/', 'Overview'], ['/trends', 'Trends'], ['/payment-mode', 'Payment mode'], ['/campaigns', 'Campaigns'], ['/reasons', 'Reasons'],
-  ['/orders', 'Orders'], ['/issues', 'Data issues'], ['/settings', 'Settings'],
+  ['/orders', 'Orders'], ['/confirm-queue', 'Confirm queue', 'sub'], ['/dispatch-desk', 'Dispatch desk', 'sub'],
+  ['/issues', 'Data issues'], ['/settings', 'Settings'],
 ];
+
+// Small live counts next to the two desks: what is waiting, and what is overdue.
+function useBadges() {
+  const [b, setB] = useState(null);
+  useEffect(() => {
+    let live = true;
+    const load = async () => {
+      if (document.hidden) return;
+      try {
+        const [q, d] = await Promise.all([api.get('/flow/confirm-queue'), api.get('/flow/dispatch', { section: 'print_slip' })]);
+        if (live) setB({ queue: q.counts, desk: d.counts });
+      } catch (e) { /* not signed in or offline: no badges */ }
+    };
+    load();
+    const t = setInterval(load, 60000);
+    return () => { live = false; clearInterval(t); };
+  }, []);
+  return b;
+}
+function Badge({ to, badges }) {
+  if (!badges) return null;
+  if (to === '/confirm-queue' && badges.queue.total > 0) return <span className={`nav-badge ${badges.queue.red > 0 ? 'bad' : ''}`} title={`${badges.queue.red} overdue`}>{badges.queue.total}</span>;
+  if (to === '/dispatch-desk') {
+    if (badges.desk.delayed > 0) return <span className="nav-badge bad" title="Delayed orders">{badges.desk.delayed}</span>;
+    if (badges.desk.print_slip + badges.desk.ready_for_pickup > 0) return <span className="nav-badge">{badges.desk.print_slip + badges.desk.ready_for_pickup}</span>;
+  }
+  return null;
+}
 
 function Login({ onDone }) {
   const [pw, setPw] = useState('');
@@ -29,6 +64,7 @@ function Login({ onDone }) {
         <input type="password" placeholder="Access key" value={pw} onChange={(e) => setPw(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && submit()} autoFocus />
         {err && <div className="banner err">{err}</div>}
         <button className="btn" onClick={submit}>Open dashboard</button>
+        <a className="muted" href="/team">Team member? Sign in with your own login</a>
       </div>
     </div>
   );
@@ -67,21 +103,47 @@ function SyncNote() {
   );
 }
 
-export default function App() {
-  const [locked, setLocked] = useState(false);
-  useEffect(() => {
-    const on = () => setLocked(true);
-    window.addEventListener('auth-required', on);
-    return () => window.removeEventListener('auth-required', on);
-  }, []);
-  if (locked) return <Login onDone={() => { setLocked(false); window.location.reload(); }} />;
+// Packing and confirmation team members get a stripped-down, phone-first screen: their desk, nothing else.
+function StaffShell({ user }) {
+  const { logout } = useStaff();
+  return (
+    <div className="staff-shell">
+      <header className="staff-top">
+        <div><b>MySoul</b><small>{user.name} · {ROLE_LABEL[user.role]}</small></div>
+        <button className="btn ghost" onClick={logout}>Sign out</button>
+      </header>
+      <main>
+        <Routes>
+          <Route path="/confirm-queue" element={<ConfirmQueue />} />
+          <Route path="/dispatch-desk" element={<DispatchDesk />} />
+          <Route path="*" element={<Navigate to={homeFor(user)} replace />} />
+        </Routes>
+      </main>
+      <nav className="staff-tabs" aria-label="Desks">
+        <NavLink to="/confirm-queue" className={({ isActive }) => (isActive ? 'active' : '')}>Confirm queue</NavLink>
+        <NavLink to="/dispatch-desk" className={({ isActive }) => (isActive ? 'active' : '')}>Dispatch desk</NavLink>
+      </nav>
+    </div>
+  );
+}
+
+function Dashboard({ user }) {
+  const { logout } = useStaff();
+  const badges = useBadges();
   return (
     <div className="shell">
       <nav className="side">
         <div className="brand">MySoul Orders<small>Sheet analytics</small></div>
-        {NAV.map(([to, label]) => <NavLink key={to} to={to} end={to === '/'} className={({ isActive }) => (isActive ? 'active' : '')}>{label}</NavLink>)}
+        {NAV.map(([to, label, kind]) => (
+          <NavLink key={to} to={to} end={to === '/'} className={({ isActive }) => `${kind === 'sub' ? 'sub ' : ''}${isActive ? 'active' : ''}`}>
+            {label}<Badge to={to} badges={badges} />
+          </NavLink>
+        ))}
         <div className="spacer" />
         <SyncNote />
+        <div className="sync-note">
+          {user ? <>Signed in as <b>{user.name}</b> · <a href="#out" onClick={(e) => { e.preventDefault(); logout(); }}>Sign out</a></> : <a href="/team">Team sign-in</a>}
+        </div>
       </nav>
       <div className="main">
         <Routes>
@@ -91,11 +153,37 @@ export default function App() {
           <Route path="/campaigns" element={<Campaigns />} />
           <Route path="/reasons" element={<Reasons />} />
           <Route path="/orders" element={<Orders />} />
+          <Route path="/confirm-queue" element={<ConfirmQueue />} />
+          <Route path="/dispatch-desk" element={<DispatchDesk />} />
           <Route path="/issues" element={<Issues />} />
           <Route path="/settings" element={<Settings />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </div>
     </div>
+  );
+}
+
+function Gate() {
+  const { user, loading } = useStaff();
+  const [locked, setLocked] = useState(false);
+  useEffect(() => {
+    const on = () => setLocked(true);
+    window.addEventListener('auth-required', on);
+    return () => window.removeEventListener('auth-required', on);
+  }, []);
+  if (loading) return <div className="empty">Loading…</div>;
+  if (user && user.mustChangePassword) return <ChangePassword />;
+  if (user && user.role !== 'admin') return <StaffShell user={user} />;
+  if (locked) return <Login onDone={() => { setLocked(false); window.location.reload(); }} />;
+  return <Dashboard user={user} />;
+}
+
+export default function App() {
+  return (
+    <Routes>
+      <Route path="/team" element={<TeamLogin />} />
+      <Route path="*" element={<Gate />} />
+    </Routes>
   );
 }
