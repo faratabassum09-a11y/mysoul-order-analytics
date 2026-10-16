@@ -11,12 +11,14 @@ export default function TeamLogin() {
   const [password, setPassword] = useState('');
   const [err, setErr] = useState('');
   const [busy, setBusy] = useState(false);
-  if (user && !user.mustChangePassword) return <Navigate to={homeFor(user)} replace />;
+  // Signed in with a password someone else set: show the change-password screen right here on /team.
+  if (user && user.mustChangePassword) return <ChangePassword />;
+  if (user) return <Navigate to={homeFor(user)} replace />;
   const submit = async (e) => {
     e.preventDefault();
     if (busy) return;
     setBusy(true); setErr('');
-    try { const u = await login(username, password); if (!u.mustChangePassword) nav(homeFor(u), { replace: true }); }
+    try { const u = await login(username, password); if (!u.mustChangePassword) nav(homeFor(u), { replace: true }); } // if a change is required, the render above swaps in ChangePassword
     catch (ex) { setErr(ex.message); } finally { setBusy(false); }
   };
   return (
