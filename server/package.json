@@ -6,9 +6,11 @@
   "scripts": {
     "start": "node src/index.js",
     "dev": "node --watch src/index.js",
-    "test": "node --test test/core.test.js test/shopify.test.js test/shopifyAuth.test.js test/shipway.test.js"
+    "test": "node --test test/core.test.js test/shopify.test.js test/shopifyAuth.test.js test/shipway.test.js test/flow.test.js test/flowService.test.js"
   },
-  "engines": { "node": ">=18" },
+  "engines": {
+    "node": ">=18"
+  },
   "dependencies": {
     "cors": "^2.8.5",
     "csv-parse": "^5.5.6",

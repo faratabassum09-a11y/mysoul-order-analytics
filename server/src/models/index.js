@@ -92,4 +92,75 @@ const Setting = mongoose.model('Setting', new Schema({
   value: Schema.Types.Mixed,
 }));
 
-module.exports = { Snapshot, ShopifyDate, ShopifyOrder, ShipwayShipment, Order, SyncRun, Setting };
+
+// ---------------------------------------------------------------------------------------------
+// Confirm Queue + Dispatch Desk (team workflow). Kept apart from Order: the sheet sync rewrites Order rows,
+// so anything the team does lives here, keyed by order number, and is never overwritten by a sync.
+// ---------------------------------------------------------------------------------------------
+
+// One login per person. Never shared: every action in the flow is stamped with the person who did it.
+const StaffUser = mongoose.model('StaffUser', new Schema({
+  username: { type: String, unique: true }, // lower case
+  name: String,
+  role: { type: String, enum: ['admin', 'confirmation', 'packing'], index: true },
+  passwordHash: String,
+  active: { type: Boolean, default: true },
+  mustChangePassword: { type: Boolean, default: false },
+  tokenVersion: { type: Number, default: 0 }, // bump to sign a person out everywhere
+  lastLoginAt: Date,
+  createdBy: String,
+}, { timestamps: true }));
+
+// Current state of one order inside the flow.
+const OrderFlow = mongoose.model('OrderFlow', new Schema({
+  orderId: { type: Number, unique: true },
+  orderAt: Date, // copy of the order time: the SLA clock starts here
+  // ---- confirm stage ----
+  confirmStatus: { type: String, default: 'pending', index: true }, // pending | no_answer | confirmed | partial_pay | cancelled
+  noAnswerAttempts: { type: Number, default: 0 },
+  lastAttemptAt: Date,
+  escalated: { type: Boolean, default: false },
+  cancelReason: String,
+  partial: { amount: Number, at: Date, byId: String, byName: String },
+  partialLinkSentAt: Date,
+  decidedAt: Date, decidedById: String, decidedByName: String, // the first final decision (confirm / partial / cancel)
+  confirmedAt: Date, // starts the 24 h dispatch plan
+  // ---- dispatch stage ----
+  dispatchStage: { type: String, default: null, index: true }, // null | print_slip | ready_for_pickup | dispatched
+  slipPrintedAt: Date, slipPrintedById: String, slipPrintedByName: String,
+  awb: { type: String },
+  weightG: Number,
+  packedAt: Date, packedById: String, packedByName: String,
+  readyAt: Date,
+  dispatchedAt: Date, dispatchedById: String, dispatchedByName: String,
+  delayReason: String,
+  proofs: { type: Number, default: 0 },
+}, { timestamps: true, minimize: false }));
+OrderFlow.index({ awb: 1 }, { unique: true, partialFilterExpression: { awb: { $type: 'string' } } }); // one AWB, one order
+
+// Append-only history. There is no route that edits or deletes a row here.
+const FlowEvent = mongoose.model('FlowEvent', new Schema({
+  orderId: { type: Number, index: true },
+  at: { type: Date, default: Date.now, index: true },
+  byId: String, byName: String, role: String,
+  stage: String, // confirm | dispatch | contact
+  action: String, // confirm | partial_pay | cancel | no_answer | auto_cancel | escalate | call | whatsapp | partial_link | slip_printed | packed | ready | dispatched | delay_reason | proof_added
+  previous: String, next: String, // status before and after (the "previous status" every log must carry)
+  label: String, // plain-language line for the timeline
+  reasonKey: String,
+  meta: Schema.Types.Mixed,
+}, { minimize: false, versionKey: false }));
+FlowEvent.index({ orderId: 1, at: 1 });
+
+// Photos (and later videos) of the sealed box on the scale. Stored in MongoDB so they survive redeploys on hosts with a temporary disk.
+const FlowProof = mongoose.model('FlowProof', new Schema({
+  orderId: { type: Number, index: true },
+  kind: { type: String, enum: ['photo', 'video'], default: 'photo' },
+  mime: String, size: Number, sha256: String,
+  data: Buffer,
+  awb: String, weightG: Number,
+  byId: String, byName: String,
+  at: { type: Date, default: Date.now },
+}, { versionKey: false }));
+
+module.exports = { StaffUser, OrderFlow, FlowEvent, FlowProof, Snapshot, ShopifyDate, ShopifyOrder, ShipwayShipment, Order, SyncRun, Setting };

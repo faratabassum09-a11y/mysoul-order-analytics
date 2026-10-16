@@ -10,6 +10,7 @@ const { startAutoSync } = require('./services/sync');
 const app = express();
 app.use(cors());
 app.use(express.json({ limit: '1mb' }));
+app.set('trust proxy', 1); // behind Render / Vercel: req.ip is the real caller (used by the sign-in brake)
 
 app.get('/api/health', (req, res) => res.json({ ok: true, db: mongoose.connection.readyState === 1 }));
 app.get('/api/auth/required', (req, res) => res.json({ required: !!cfg.accessPassword }));
@@ -59,10 +60,16 @@ app.get('/api/shopify/callback', async (req, res) => {
   }
 });
 
-// Optional shared-password gate for everything else under /api
-app.use('/api', (req, res, next) => {
+// Team logins (Confirm Queue, Dispatch Desk). These routes do their own per-person sign-in, so they sit before the shared-key gate.
+const teamRoutes = require('./routes/flow');
+app.use('/api/staff', teamRoutes.staff);
+app.use('/api/flow', teamRoutes.flow);
+
+// Optional shared-password gate for everything else under /api. An admin signed in with their own login also gets through.
+app.use('/api', async (req, res, next) => {
   if (!cfg.accessPassword) return next();
   if (req.get('x-access-key') === cfg.accessPassword) return next();
+  try { const u = await teamRoutes.staffFromReq(req); if (u && u.role === 'admin') return next(); } catch (e) { /* fall through to 401 */ }
   res.status(401).json({ error: 'Access key required' });
 });
 app.use('/api', api);

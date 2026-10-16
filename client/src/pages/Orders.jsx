@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { api, useApi } from '../api.js';
 import { useFilters } from '../filters.jsx';
 import { FilterBar, Loading, StatusTag } from '../components.jsx';
+import { FlowSection } from '../deskUi.jsx';
 import { MODES, inr, int } from '../format.js';
 
 const STATUSES = ['Pending confirmation', 'Cancelled', 'Confirmed', 'In Transit', 'Delivered', 'RTO'];
@@ -144,6 +145,7 @@ export function OrderDrawer({ sheetRow, onClose }) {
                 <dt>Phone / email</dt>
                 <dd>{reveal ? (data.phoneShown || data.emailShown || '—') : <button className="btn ghost" onClick={() => setReveal(true)}>Reveal</button>}</dd>
               </dl>
+              {data.orderId != null && !data.excluded && <FlowSection orderId={data.orderId} />}
               <ShipwaySection s={data.shipway} />
               <ShopifySection s={data.shopify} reveal={reveal} onReveal={() => setReveal(true)} />
               {data.conflicts.length > 0 && <div className="banner warn" style={{ marginTop: 14 }}><b>Conflicts:</b> {data.conflicts.join('; ')}</div>}

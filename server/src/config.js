@@ -40,6 +40,8 @@ module.exports = {
     // How often to refresh tracking status (0 = only by button).
     syncIntervalMin: env.SHIPWAY_SYNC_INTERVAL_MIN === undefined || env.SHIPWAY_SYNC_INTERVAL_MIN === '' ? 10 : Math.max(0, Number(env.SHIPWAY_SYNC_INTERVAL_MIN) || 0),
   },
+  // Confirm Queue / Dispatch Desk. Proof video is built into the data model but off until switched on (FLOW_VIDEO_ENABLED=1).
+  flow: { videoEnabled: env.FLOW_VIDEO_ENABLED === '1', tokenSecret: env.STAFF_TOKEN_SECRET || '' },
   // Public address of this server (used for the Shopify redirect URL). Render sets RENDER_EXTERNAL_URL by itself.
   publicUrl: (env.PUBLIC_URL || env.RENDER_EXTERNAL_URL || '').trim(),
   // Secret for the external trigger URL /api/cron/sync (cron-job.org, UptimeRobot, GitHub Actions).

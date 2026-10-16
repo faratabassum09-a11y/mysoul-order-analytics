@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { api, useApi } from '../api.js';
 import { Loading } from '../components.jsx';
+import { DeskSettingsCard, TeamCard } from './TeamAdmin.jsx';
 
 const when = (d) => (d ? new Date(d).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'Asia/Kolkata' }) : '—');
 
@@ -300,7 +301,11 @@ export default function Settings() {
           <ShipwayCard />
           <SyncCard key={v} />
         </div>
-        <ReasonMap />
+        <div style={{ display: 'grid', gap: 14, alignContent: 'start' }}>
+          <TeamCard />
+          <DeskSettingsCard />
+          <ReasonMap />
+        </div>
       </div>
     </div>
   );
