@@ -112,7 +112,7 @@ const StaffUser = mongoose.model('StaffUser', new Schema({
 }, { timestamps: true }));
 
 // Current state of one order inside the flow.
-const OrderFlow = mongoose.model('OrderFlow', new Schema({
+const orderFlowSchema = new Schema({
   orderId: { type: Number, unique: true },
   orderAt: Date, // copy of the order time: the SLA clock starts here
   // ---- confirm stage ----
@@ -135,11 +135,12 @@ const OrderFlow = mongoose.model('OrderFlow', new Schema({
   dispatchedAt: Date, dispatchedById: String, dispatchedByName: String,
   delayReason: String,
   proofs: { type: Number, default: 0 },
-}, { timestamps: true, minimize: false }));
-OrderFlow.index({ awb: 1 }, { unique: true, partialFilterExpression: { awb: { $type: 'string' } } }); // one AWB, one order
+}, { timestamps: true, minimize: false });
+orderFlowSchema.index({ awb: 1 }, { unique: true, partialFilterExpression: { awb: { $type: 'string' } } }); // one AWB, one order
+const OrderFlow = mongoose.model('OrderFlow', orderFlowSchema);
 
 // Append-only history. There is no route that edits or deletes a row here.
-const FlowEvent = mongoose.model('FlowEvent', new Schema({
+const flowEventSchema = new Schema({
   orderId: { type: Number, index: true },
   at: { type: Date, default: Date.now, index: true },
   byId: String, byName: String, role: String,
@@ -149,8 +150,9 @@ const FlowEvent = mongoose.model('FlowEvent', new Schema({
   label: String, // plain-language line for the timeline
   reasonKey: String,
   meta: Schema.Types.Mixed,
-}, { minimize: false, versionKey: false }));
-FlowEvent.index({ orderId: 1, at: 1 });
+}, { minimize: false, versionKey: false });
+flowEventSchema.index({ orderId: 1, at: 1 });
+const FlowEvent = mongoose.model('FlowEvent', flowEventSchema);
 
 // Photos (and later videos) of the sealed box on the scale. Stored in MongoDB so they survive redeploys on hosts with a temporary disk.
 const FlowProof = mongoose.model('FlowProof', new Schema({
