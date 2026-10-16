@@ -3,7 +3,6 @@ const env = process.env;
 module.exports = {
   port: Number(env.PORT) || 4000,
   mongoUri: env.MONGO_URI || 'mongodb://127.0.0.1:27017/mysoul_orders',
-  accessPassword: env.ACCESS_PASSWORD || '',
   sheet: {
     id: env.SHEET_ID || '',
     orderTab: env.SHEET_ORDER_TAB || 'Order Sheet',

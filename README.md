@@ -29,7 +29,7 @@ Pick one in `server/.env`:
 2. **`SHEET_SOURCE=api`** for a private sheet. Create a Google service account, enable the Sheets API, share the sheet with the service account email as Viewer, and set `GOOGLE_SERVICE_ACCOUNT_FILE` (or `_JSON`).
 3. **`SHEET_SOURCE=none`**: upload CSV exports from Settings.
 
-Then open **Settings** and press **Sync now**. After that nothing needs uploading: see *Automatic sync* below. Set `ACCESS_PASSWORD` to put the dashboard behind a shared key (recommended, the data holds customer names).
+Then open **Settings** and press **Sync now**. After that nothing needs uploading: see *Automatic sync* below. The dashboard is open only to people signed in with their own team login (see *Team logins* below); there is no shared password.
 
 ## Automatic sync (no daily uploads)
 
@@ -78,7 +78,7 @@ There are two ways to give the server access. Which one applies depends on wheth
 - By default Shopify only releases the **last 60 days** of orders to an app. Older orders need the `read_all_orders` permission, which Shopify must approve (request it in the Dev Dashboard). Once approved, add it to the app version, set `SHOPIFY_SCOPES=read_orders,read_customers,read_all_orders` on the server, and press Reconnect Shopify. Until then, older orders show "no Shopify data", and the CSV date backfill stays available for their dates.
 - The order date from Shopify also fills the "undated" sheet rows automatically, replacing the CSV upload for every order Shopify releases.
 - If names or emails come back empty, check that `read_customers` is on the released app version. Test connection reports it.
-- The access token and customer details are stored in your own MongoDB. Keep `ACCESS_PASSWORD` set.
+- The access token and customer details are stored in your own MongoDB. Only signed-in admins can open the dashboard.
 - The Shopify API version is set by `SHOPIFY_API_VERSION` (default `2026-04`). Shopify retires old versions after about a year.
 
 ## Shipway: dispatch and tracking status per order
@@ -105,7 +105,7 @@ Orders are dispatched from Shipway, so every order has **two statuses, shown sep
 Two screens under **Orders** in the left menu, built for the team's phones.
 
 **First-time setup**
-1. Settings, **Team logins**: create the first **Admin** (with `ACCESS_PASSWORD` set, the dashboard key creates it; with no key set, the very first admin can be created openly, so set a key first). Then add each person with their **own** login and a temporary password; they choose their own at first sign-in. Never share a login: every action is stamped with the person.
+1. Settings, **Team logins**: create the first **Admin** (the very first admin can be created openly only while no admin exists; create it right after deploying). Then add each person with their **own** login and a temporary password; they choose their own at first sign-in. Never share a login: every action is stamped with the person.
 2. Settings, **Confirm queue settings**: what happens after the third unanswered call (auto-cancel or escalate), the date the queue starts from (default: last 7 days), and the **partial payment link** template (for example your Razorpay page, with `{orderId}` and `{amount}` placeholders).
 3. Team members open `https://YOUR-SITE/team` on their phone and sign in. Confirmation and packing roles see only their desk (bottom tabs); admins see the whole dashboard.
 

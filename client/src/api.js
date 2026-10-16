@@ -1,8 +1,7 @@
 import { useEffect, useState } from 'react';
 
 const BASE = '/api';
-export const getKey = () => localStorage.getItem('accessKey') || '';
-export const setKey = (k) => localStorage.setItem('accessKey', k);
+try { localStorage.removeItem('accessKey'); } catch (e) { /* the old shared key is gone; clear any leftover */ }
 // Each team member signs in with their own login; the token identifies who did what.
 export const getStaffToken = () => localStorage.getItem('staffToken') || '';
 export const setStaffToken = (t) => (t ? localStorage.setItem('staffToken', t) : localStorage.removeItem('staffToken'));
@@ -15,7 +14,7 @@ function qs(params = {}) {
 }
 
 const authHeaders = () => {
-  const h = { 'x-access-key': getKey() };
+  const h = {};
   const t = getStaffToken();
   if (t) h.Authorization = `Bearer ${t}`;
   return h;
@@ -29,8 +28,8 @@ async function request(method, path, { params, body, form, quiet401 } = {}) {
   const res = await fetch(`${BASE}${path}${qs(params)}`, { method, headers, body: payload });
   const data = await res.json().catch(() => ({}));
   if (res.status === 401 && !quiet401) {
-    if (getStaffToken()) { window.dispatchEvent(new Event('staff-expired')); throw new Error('Your session ended. Sign in again.'); }
-    window.dispatchEvent(new Event('auth-required')); throw new Error('Access key required');
+    window.dispatchEvent(new Event('staff-expired'));
+    throw new Error('Your session ended. Sign in again.');
   }
   if (!res.ok) throw Object.assign(new Error(data.error || `Request failed (${res.status})`), { status: res.status, code: data.code });
   return data;

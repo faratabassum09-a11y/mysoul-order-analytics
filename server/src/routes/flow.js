@@ -32,22 +32,20 @@ async function staffFromReq(req) {
   if (!u || !u.active || (u.tokenVersion || 0) !== p.v) return null;
   return { id: String(u._id), name: u.name, role: u.role, username: u.username, mustChangePassword: !!u.mustChangePassword };
 }
-const keyOk = (req) => !cfg.accessPassword || req.get('x-access-key') === cfg.accessPassword; // the existing shared dashboard key (read-only here)
 
-// Any caller we can name: a staff member, or the dashboard key (read only).
+// Every caller must be a signed-in team member. There is no shared key any more.
 const auth = wrap(async (req, res, next) => {
   req.staff = await staffFromReq(req);
-  req.manager = !req.staff && keyOk(req) && !!(req.get('x-access-key') || !cfg.accessPassword);
-  if (req.staff || req.manager) return next();
+  if (req.staff) return next();
   res.status(401).json({ error: 'Sign in with your team login' });
 });
 const need = (...roles) => (req, res, next) => {
-  if (!req.staff) return res.status(403).json({ error: 'Sign in with your own team login to act on orders. The dashboard key can only view.' });
+  if (!req.staff) return res.status(403).json({ error: 'Sign in with your own team login to act on orders.' });
   if (req.staff.mustChangePassword) return res.status(403).json({ error: 'Set your own password first.', code: 'change_password' });
   if (req.staff.role === 'admin' || roles.includes(req.staff.role)) return next();
   res.status(403).json({ error: 'Your role cannot do this.' });
 };
-const dashboardOnly = (req, res, next) => (req.manager || (req.staff && req.staff.role === 'admin') ? next() : res.status(403).json({ error: 'Admins only' }));
+const dashboardOnly = (req, res, next) => (req.staff && req.staff.role === 'admin' && !req.staff.mustChangePassword ? next() : res.status(403).json({ error: 'Admins only' }));
 
 const orderIdOf = (req) => { const n = Number(req.params.orderId); if (!Number.isInteger(n) || n <= 0) throw httpErr(400, 'Bad order number'); return n; };
 
@@ -70,7 +68,7 @@ staff.post('/login', wrap(async (req, res) => {
   res.json({ token: A.signToken({ uid: String(u._id), v: u.tokenVersion || 0 }, await secret()), user: publicUser(u) });
 }));
 
-staff.get('/me', auth, (req, res) => (req.staff ? res.json({ user: req.staff }) : res.json({ user: null, manager: true })));
+staff.get('/me', auth, (req, res) => (req.staff ? res.json({ user: req.staff }) : res.json({ user: null })));
 
 staff.post('/password', auth, wrap(async (req, res) => {
   if (!req.staff) throw httpErr(403, 'Sign in with your team login');
@@ -85,13 +83,12 @@ staff.post('/password', auth, wrap(async (req, res) => {
   res.json({ token: A.signToken({ uid: String(u._id), v: u.tokenVersion }, await secret()), user: publicUser(u) }); // other devices are signed out
 }));
 
-// Admin gate for team management. The first admin can be made with the dashboard key, or (only when no dashboard key is set and no admin exists yet) openly.
+// Admin gate for team management. Only an admin can manage the team; the very first admin can be created openly only while no admin exists yet.
 const manageAuth = wrap(async (req, res, next) => {
   req.staff = await staffFromReq(req);
   if (req.staff && req.staff.role === 'admin') return next();
   const haveAdmin = (await StaffUser.countDocuments({ role: 'admin', active: true })) > 0;
-  if (cfg.accessPassword && req.get('x-access-key') === cfg.accessPassword) return next();
-  if (!cfg.accessPassword && !haveAdmin) return next();
+  if (!haveAdmin) return next();
   res.status(403).json({ error: 'Only an admin can manage the team.' });
 });
 
@@ -109,7 +106,7 @@ staff.post('/users', manageAuth, wrap(async (req, res) => {
   const bad = A.passwordProblem(b.password);
   if (bad) throw httpErr(400, bad);
   if (await StaffUser.exists({ username })) throw httpErr(409, 'That username is taken.');
-  const u = await StaffUser.create({ username, name, role: b.role, passwordHash: A.hashPassword(b.password), mustChangePassword: true, createdBy: req.staff ? req.staff.username : 'dashboard key' });
+  const u = await StaffUser.create({ username, name, role: b.role, passwordHash: A.hashPassword(b.password), mustChangePassword: true, createdBy: req.staff ? req.staff.username : 'first-time setup' });
   res.status(201).json({ user: publicUser(u) });
 }));
 

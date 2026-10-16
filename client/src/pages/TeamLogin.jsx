@@ -5,12 +5,13 @@ import { useStaff } from '../staff.jsx';
 export const homeFor = (u) => (!u ? '/team' : u.role === 'packing' ? '/dispatch-desk' : u.role === 'confirmation' ? '/confirm-queue' : '/');
 
 export default function TeamLogin() {
-  const { user, login } = useStaff();
+  const { user, login, loading } = useStaff();
   const nav = useNavigate();
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [err, setErr] = useState('');
   const [busy, setBusy] = useState(false);
+  if (loading) return <div className="empty">Loading…</div>;
   // Signed in with a password someone else set: show the change-password screen right here on /team.
   if (user && user.mustChangePassword) return <ChangePassword />;
   if (user) return <Navigate to={homeFor(user)} replace />;
