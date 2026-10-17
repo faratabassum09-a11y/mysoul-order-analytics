@@ -448,3 +448,20 @@ tr.click { cursor: pointer; } tr.click:hover td { background: #f8f9f6; }
   .sd-drawer { width: 100%; }
   .sd-set-row { flex-direction: column; align-items: flex-start; }
 }
+
+/* Order analysis tab */
+.oa-table th.c { background: #e2eef7; color: #0b5a82; } .oa-table th.d { background: var(--done-bg); color: var(--disp); } .oa-table th.s { background: #fbefdc; color: #8a5a0c; } .oa-table th.t { background: var(--line-2); color: var(--ink-2); }
+.oa-band th { text-align: center; font-size: 11px; letter-spacing: .08em; text-transform: uppercase; border-bottom: 0; background: var(--line-2); color: var(--ink-2); }
+.oa-table tr.open > td { background: var(--accent-soft); }
+.oa-step { display: grid; gap: 1px; } .oa-step b { font-weight: 600; white-space: nowrap; }
+.oa-mark { display: inline-block; font-size: 11px; font-weight: 700; padding: 1px 8px; border-radius: 99px; margin-top: 2px; justify-self: start; }
+.oa-mark.ok { background: var(--done-bg); color: var(--done); } .oa-mark.late { background: var(--cancel-bg); color: var(--cancel); }
+.oa-calls { font-weight: 700; }
+.oa-open > td { background: var(--surface); padding: 0; }
+.oa-detail { display: grid; grid-template-columns: minmax(280px, 1.4fr) minmax(240px, 1fr); gap: 24px; padding: 16px 20px; border-left: 4px solid var(--accent); }
+.oa-detail h4 { margin: 0 0 10px; font-size: 13px; color: var(--ink-2); text-transform: uppercase; letter-spacing: .06em; }
+.oa-tl ol { list-style: none; margin: 0; padding: 0 0 0 14px; border-left: 2px solid var(--line); display: grid; gap: 12px; }
+.oa-tl li { position: relative; } .oa-tl li::before { content: ''; position: absolute; left: -21px; top: 4px; width: 10px; height: 10px; border-radius: 50%; background: var(--ink-3); border: 2px solid var(--surface); }
+.oa-tl li.good::before { background: var(--good); } .oa-tl li.bad::before { background: var(--bad); } .oa-tl li.warn::before { background: var(--warn); }
+.oa-tl time { display: block; font-size: 12px; color: var(--ink-3); }
+@media (max-width: 800px) { .oa-detail { grid-template-columns: 1fr; } }

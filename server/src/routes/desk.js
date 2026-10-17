@@ -33,6 +33,7 @@ router.put('/config', adminOnly, wrap(async (req, res) => res.json(await svc.sav
 router.get('/overview', adminOnly, wrap(async (req, res) => res.json(await svc.overview(req.query))));
 router.post('/refresh', wrap(async (req, res) => res.json(await svc.refresh())));
 
+router.get('/analysis', wrap(async (req, res) => res.json(await svc.analysisData(req.query))));
 router.get('/analysis.xlsx', wrap(async (req, res) => {
   const { buffer, count } = await svc.analysisSheet(req.query);
   const one = Number(req.query.orderId);
