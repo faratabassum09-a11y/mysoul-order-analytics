@@ -89,3 +89,14 @@ export function useApi(path, params, enabled = true) {
   }, [key, tick]);
   return { ...state, reload: () => setTick((t) => t + 1) };
 }
+
+// Payment screenshots of the Shopify Desk need the sign-in header too.
+export async function deskShotUrl(id) {
+  const k = `desk:${id}`;
+  if (blobCache.has(k)) return blobCache.get(k);
+  const res = await fetch(`${BASE}/desk/shots/${id}`, { headers: authHeaders() });
+  if (!res.ok) throw new Error('Could not load this screenshot');
+  const url = URL.createObjectURL(await res.blob());
+  blobCache.set(k, url);
+  return url;
+}

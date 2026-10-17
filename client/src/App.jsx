@@ -3,6 +3,7 @@ import { NavLink, Navigate, Route, Routes } from 'react-router-dom';
 import { api, useApi } from './api.js';
 import { ROLE_LABEL } from './flowUi.js';
 import { useStaff } from './staff.jsx';
+import ShopifyDesk, { deskHome } from './pages/desk/ShopifyDesk.jsx';
 import ConfirmQueue from './pages/ConfirmQueue.jsx';
 import DispatchDesk from './pages/DispatchDesk.jsx';
 import TeamLogin, { ChangePassword, homeFor } from './pages/TeamLogin.jsx';
@@ -17,7 +18,7 @@ import Settings from './pages/Settings.jsx';
 
 // Third item 'sub' = an indented entry that lives under the item above it.
 const NAV = [
-  ['/', 'Overview'], ['/trends', 'Trends'], ['/payment-mode', 'Payment mode'], ['/campaigns', 'Campaigns'], ['/reasons', 'Reasons'],
+  ['/', 'Overview'], ['/shopify-desk', 'Shopify desk'], ['/trends', 'Trends'], ['/payment-mode', 'Payment mode'], ['/campaigns', 'Campaigns'], ['/reasons', 'Reasons'],
   ['/orders', 'Orders'], ['/confirm-queue', 'Confirm queue', 'sub'], ['/dispatch-desk', 'Dispatch desk', 'sub'],
   ['/issues', 'Data issues'], ['/settings', 'Settings'],
 ];
@@ -30,18 +31,24 @@ function useBadges() {
     const load = async () => {
       if (document.hidden) return;
       try {
-        const [q, d] = await Promise.all([api.get('/flow/confirm-queue'), api.get('/flow/dispatch', { section: 'print_slip' })]);
-        if (live) setB({ queue: q.counts, desk: d.counts });
+        const [q, d, s] = await Promise.all([api.get('/flow/confirm-queue'), api.get('/flow/dispatch', { section: 'print_slip' }), api.get('/desk/counts').catch(() => null)]);
+        if (live) setB({ queue: q.counts, desk: d.counts, shop: s });
       } catch (e) { /* not signed in or offline: no badges */ }
     };
     load();
     const t = setInterval(load, 60000);
-    return () => { live = false; clearInterval(t); };
+    window.addEventListener('desk-changed', load);
+    return () => { live = false; clearInterval(t); window.removeEventListener('desk-changed', load); };
   }, []);
   return b;
 }
 function Badge({ to, badges }) {
   if (!badges) return null;
+  if (to === '/shopify-desk' && badges.shop) {
+    const due = badges.shop.confirm.due + badges.shop.pending.due;
+    const open = badges.shop.confirm.total + badges.shop.pending.total;
+    if (open > 0) return <span className={`nav-badge ${due > 0 ? 'bad' : ''}`} title={`${due} calls due now`}>{due > 0 ? due : open}</span>;
+  }
   if (to === '/confirm-queue' && badges.queue.total > 0) return <span className={`nav-badge ${badges.queue.red > 0 ? 'bad' : ''}`} title={`${badges.queue.red} overdue`}>{badges.queue.total}</span>;
   if (to === '/dispatch-desk') {
     if (badges.desk.delayed > 0) return <span className="nav-badge bad" title="Delayed orders">{badges.desk.delayed}</span>;
@@ -96,12 +103,14 @@ function StaffShell({ user }) {
         <Routes>
           <Route path="/confirm-queue" element={<ConfirmQueue />} />
           <Route path="/dispatch-desk" element={<DispatchDesk />} />
+          <Route path="/shopify-desk/*" element={<ShopifyDesk />} />
           <Route path="*" element={<Navigate to={homeFor(user)} replace />} />
         </Routes>
       </main>
       <nav className="staff-tabs" aria-label="Desks">
         <NavLink to="/confirm-queue" className={({ isActive }) => (isActive ? 'active' : '')}>Confirm queue</NavLink>
         <NavLink to="/dispatch-desk" className={({ isActive }) => (isActive ? 'active' : '')}>Dispatch desk</NavLink>
+        <NavLink to={deskHome(user)} className={({ isActive }) => (isActive ? 'active' : '')}>Shopify desk</NavLink>
       </nav>
     </div>
   );
@@ -132,6 +141,7 @@ function Dashboard({ user }) {
           <Route path="/payment-mode" element={<PaymentMode />} />
           <Route path="/campaigns" element={<Campaigns />} />
           <Route path="/reasons" element={<Reasons />} />
+          <Route path="/shopify-desk/*" element={<ShopifyDesk />} />
           <Route path="/orders" element={<Orders />} />
           <Route path="/confirm-queue" element={<ConfirmQueue />} />
           <Route path="/dispatch-desk" element={<DispatchDesk />} />

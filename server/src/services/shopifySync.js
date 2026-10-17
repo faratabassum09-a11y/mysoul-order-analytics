@@ -62,6 +62,7 @@ async function run({ full = false } = {}) {
     await putSetting(CURSOR_KEY, startedAt.toISOString());
     await putSetting(LAST_KEY, { at: new Date(), ok: true, mode: state.mode, saved, newDates });
     if (newDates > 0) await applyNewDates();
+    require('./deskService').ingest().catch((e) => console.warn('[desk] ingest failed:', e.message)); // new Shopify orders enter the Shopify Desk queue at once
     return { mode: state.mode, saved, newDates };
   } catch (e) {
     await putSetting(LAST_KEY, { at: new Date(), ok: false, mode: state.mode, saved, error: e.message }).catch(() => {});
