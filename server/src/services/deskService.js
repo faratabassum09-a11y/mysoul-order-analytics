@@ -479,9 +479,11 @@ async function orderDetail(orderId) {
   };
 }
 
-// ---------------------------------------------------------------- analysis sheet (Excel): what happened to each order, all at once
+// ---------------------------------------------------------------- order analysis: what happened to each order, all at once (on screen and as Excel)
 // q: { orderId } for one order, or the same window / stage / q filters as the Orders list. Capped at 5000 orders.
-async function analysisSheet(q = {}) {
+// Times in the rows are shifted by +5:30 so that formatting them as UTC shows IST (Excel has no time zones).
+const STAGE_NAME_FOR_SCOPE = (k) => ({ confirm: 'Confirm queue', pending: 'Pending', dispatch: 'To dispatch', dispatched: 'Dispatched', cancelled: 'Cancelled', partial: 'Partial paid', none: 'Not in queue' }[k] || k);
+async function analysisRows(q = {}) {
   await ingestIfStale();
   const A = require('../lib/analysisSheet');
   const one = Number(q.orderId);
@@ -496,7 +498,7 @@ async function analysisSheet(q = {}) {
     scope = `${w.label || 'All time'}${q.stage ? ` · ${STAGE_NAME_FOR_SCOPE(q.stage)}` : ''}${q.q ? ` · search “${String(q.q).slice(0, 40)}”` : ''}`;
   }
   const shops = await ShopifyOrder.find(base).select(SHOP_FIELDS).sort({ createdAt: -1 }).limit(5000).lean();
-  const ids = shops.map((s) => s.orderId);
+  const ids = shops.map((x) => x.orderId);
   const [desks, ships, dconf] = await Promise.all([
     DeskOrder.find({ orderId: { $in: ids } }).lean(),
     ShipwayShipment.find({ orderId: { $in: ids }, found: true }).select('orderId status carrier awb statusAt').lean(),
@@ -504,13 +506,28 @@ async function analysisSheet(q = {}) {
   ]);
   const dBy = new Map(desks.map((d) => [d.orderId, d])); const hBy = new Map(ships.map((h) => [h.orderId, h]));
   const now = new Date();
-  let rows = shops.map((s) => A.journeyRow({ orderId: s.orderId, shop: s, desk: dBy.get(s.orderId), ship: hBy.get(s.orderId), dconf, now }));
+  let rows = shops.map((x) => A.journeyRow({ orderId: x.orderId, shop: x, desk: dBy.get(x.orderId), ship: hBy.get(x.orderId), dconf, now }));
   const want = String(q.stage || '');
   if (want && !Number.isInteger(one)) rows = rows.filter((r) => r.stage === want || (want === 'partial' && r.partialAmount > 0));
-  if (Number.isInteger(one) && !rows.length) throw httpErr(404, `Order #${one} was not found`);
-  return { buffer: await A.buildWorkbook(rows, { title: Number.isInteger(one) ? `Order #${one}: what happened` : 'Order analysis', scope }), count: rows.length };
+  if (Number.isInteger(one) && one > 0 && !rows.length) throw httpErr(404, `Order #${one} was not found`);
+  return { rows, scope, w: { key: w.key, label: w.label, start: w.start ? fmtDate(w.start) : null, end: w.end ? fmtDate(new Date(w.end - 1)) : null }, one };
 }
-const STAGE_NAME_FOR_SCOPE = (k) => ({ confirm: 'Confirm queue', pending: 'Pending', dispatch: 'To dispatch', dispatched: 'Dispatched', cancelled: 'Cancelled', partial: 'Partial paid', none: 'Not in queue' }[k] || k);
+
+async function analysisSheet(q = {}) {
+  const A = require('../lib/analysisSheet');
+  const { rows, scope, one } = await analysisRows(q);
+  return { buffer: await A.buildWorkbook(rows, { title: Number.isInteger(one) && one > 0 ? `Order #${one}: what happened` : 'Order analysis', scope }), count: rows.length };
+}
+
+async function analysisData(q = {}) {
+  const A = require('../lib/analysisSheet');
+  const { rows, scope, w } = await analysisRows(q);
+  const limit = Math.min(200, Math.max(1, parseInt(q.limit) || 50));
+  const page = Math.max(1, parseInt(q.page) || 1);
+  const sum = A.summarise(rows);
+  const chips = {}; for (const r of rows) chips[r.stage] = (chips[r.stage] || 0) + 1;
+  return { scope, range: w, total: rows.length, page, limit, summary: sum, chips, rows: rows.slice((page - 1) * limit, page * limit) };
+}
 
 // ---------------------------------------------------------------- Overview
 async function statsFor(w, now) {
@@ -568,4 +585,4 @@ function start() {
   }
 }
 
-module.exports = { analysisSheet, getConfig, saveConfig, getDispatchConfig, saveDispatchConfig, liveAwb, dispatchBoard, dispatchSlip, dispatchPacked, dispatchHandover, proofFile, transitList, refreshTransit, ingest, ingestIfStale, act, savePartial, shotFile, counts, queue, ordersList, orderDetail, overview, refresh, start, cardOf };
+module.exports = { analysisData, analysisSheet, getConfig, saveConfig, getDispatchConfig, saveDispatchConfig, liveAwb, dispatchBoard, dispatchSlip, dispatchPacked, dispatchHandover, proofFile, transitList, refreshTransit, ingest, ingestIfStale, act, savePartial, shotFile, counts, queue, ordersList, orderDetail, overview, refresh, start, cardOf };

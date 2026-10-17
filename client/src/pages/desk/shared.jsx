@@ -266,7 +266,7 @@ export function OrderDrawer({ orderId, onClose }) {
     <>
       <div className="drawer-bg" onClick={onClose} />
       <aside className="drawer sd-drawer" role="dialog" aria-modal="true" aria-label={`Order ${orderId}`}>
-        <div className="sheet-head"><h2>{c ? c.orderName : `#${orderId}`}</h2><span><button className="btn" onClick={() => api.download('/desk/analysis.xlsx', { orderId }, `order-${orderId}.xlsx`).catch(() => {})} title="Excel sheet of everything that happened to this order">Download sheet</button> <button className="btn ghost" onClick={onClose}>Close</button></span></div>
+        <div className="sheet-head"><h2>{c ? c.orderName : `#${orderId}`}</h2><button className="btn ghost" onClick={onClose}>Close</button></div>
         {error && <div className="banner err">{error}</div>}
         {loading && !data && <div className="empty">Loading…</div>}
         {data && (

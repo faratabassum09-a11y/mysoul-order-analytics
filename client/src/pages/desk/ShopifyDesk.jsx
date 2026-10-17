@@ -6,6 +6,7 @@ import { useStaff } from '../../staff.jsx';
 import { notifyDesk, useDeskCounts } from './shared.jsx';
 import DeskOverview from './DeskOverview.jsx';
 import DeskOrders from './DeskOrders.jsx';
+import OrderAnalysis from './OrderAnalysis.jsx';
 import { ConfirmQueue, PendingQueue } from './DeskQueue.jsx';
 import { PartialPaid, CancelledOrders } from './DeskLists.jsx';
 import DispatchBoard from './DispatchBoard.jsx';
@@ -19,6 +20,7 @@ function tabsFor(role, c) {
   const all = [
     ['overview', 'Overview', null, ['admin']],
     ['orders', 'Shopify orders', null, ALL],
+    ['analysis', 'Order analysis', null, ALL],
     ['confirm', 'Confirm queue', c && n(c.confirm.total), ['admin', 'confirmation'], c && c.confirm.due],
     ['pending', 'Pending orders', c && n(c.pending.total), ['admin', 'confirmation'], c && c.pending.due],
     ['dispatch', 'Dispatch queue', c && n(c.dispatch), ['admin', 'packing'], c && c.dispatchSteps && c.dispatchSteps.overdue],
@@ -69,6 +71,7 @@ export default function ShopifyDesk() {
       <Routes>
         <Route path="overview" element={guard('overview', <DeskOverview />)} />
         <Route path="orders" element={<DeskOrders />} />
+        <Route path="analysis" element={<OrderAnalysis />} />
         <Route path="confirm" element={guard('confirm', <ConfirmQueue />)} />
         <Route path="pending" element={guard('pending', <PendingQueue />)} />
         <Route path="dispatch" element={guard('dispatch', <DispatchBoard />)} />
