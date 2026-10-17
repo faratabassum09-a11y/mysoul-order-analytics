@@ -121,6 +121,7 @@ const ORDER_FIELDS = `
   totalShippingPriceSet { shopMoney { amount } }
   totalDiscountsSet { shopMoney { amount } }
   currentTotalPriceSet { shopMoney { amount } }
+  fulfillments(first: 5) { trackingInfo(first: 5) { number company url } }
   lineItems(first: 25) { nodes { title variantTitle sku quantity currentQuantity originalUnitPriceSet { shopMoney { amount } } } }
 `;
 const LIST_QUERY = `query Orders($first: Int!, $after: String, $query: String, $sortKey: OrderSortKeys!, $reverse: Boolean!) {

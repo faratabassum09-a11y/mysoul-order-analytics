@@ -6,7 +6,7 @@
   "scripts": {
     "start": "node src/index.js",
     "dev": "node --watch src/index.js",
-    "test": "node --test test/core.test.js test/shopify.test.js test/shopifyAuth.test.js test/shipway.test.js test/flow.test.js test/flowService.test.js test/desk.test.js"
+    "test": "node --test test/core.test.js test/shopify.test.js test/shopifyAuth.test.js test/shipway.test.js test/flow.test.js test/flowService.test.js test/desk.test.js test/dispatch.test.js"
   },
   "engines": {
     "node": ">=18"

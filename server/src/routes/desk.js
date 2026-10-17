@@ -22,7 +22,7 @@ const adminOnly = (req, res, next) => (req.staff.role === 'admin' ? next() : res
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 8 * 1024 * 1024, files: 1 } });
 const takeFile = (field) => (req, res, next) => upload.single(field)(req, res, (e) => {
   if (!e) return next();
-  next(httpErr(400, e.code === 'LIMIT_FILE_SIZE' ? 'The screenshot is too large (max 8 MB).' : 'The upload failed. Try again.'));
+  next(httpErr(400, e.code === 'LIMIT_FILE_SIZE' ? 'The photo is too large (max 8 MB).' : 'The upload failed. Try again.'));
 });
 const orderIdOf = (req) => { const n = Number(req.params.orderId); if (!Number.isInteger(n) || n <= 0) throw httpErr(400, 'Bad order number'); return n; };
 const who = (req) => ({ id: req.staff.id, name: req.staff.name, role: req.staff.role });
@@ -50,6 +50,33 @@ router.post('/orders/:orderId/partial', need('confirmation'), takeFile('screensh
   const b = req.body || {};
   res.json(await svc.savePartial(who(req), orderIdOf(req), { amount: b.amount, notes: b.notes, file: req.file }));
 }));
+
+// ---------------------------------------------------------------- Dispatch queue (packing team + admin): packing slip -> order packed -> order handover
+router.get('/dispatch/config', wrap(async (req, res) => res.json(await svc.getDispatchConfig())));
+router.put('/dispatch/config', adminOnly, wrap(async (req, res) => res.json(await svc.saveDispatchConfig(req.body || {}))));
+router.get('/dispatch/board', need('packing'), wrap(async (req, res) => res.json(await svc.dispatchBoard(req.query))));
+router.get('/dispatch/:orderId/awb', need('packing'), wrap(async (req, res) => res.json(await svc.liveAwb(orderIdOf(req)))));
+router.post('/dispatch/:orderId/slip', need('packing'), wrap(async (req, res) => res.json(await svc.dispatchSlip(who(req), orderIdOf(req)))));
+router.post('/dispatch/:orderId/packed', need('packing'), takeFile('photo'), wrap(async (req, res) => {
+  const b = req.body || {};
+  res.json(await svc.dispatchPacked(who(req), orderIdOf(req), { awb: b.awb, courier: b.courier, file: req.file }));
+}));
+router.post('/dispatch/handover', need('packing'), takeFile('manifest'), wrap(async (req, res) => {
+  const b = req.body || {};
+  let ids = [];
+  try { ids = JSON.parse(b.orderIds); } catch (e) { ids = String(b.orderIds || '').split(','); } // the app sends JSON; a comma list also works
+  res.json(await svc.dispatchHandover(who(req), Array.isArray(ids) ? ids : [], { courier: b.courier, file: req.file }));
+}));
+router.get('/proofs/:id', wrap(async (req, res) => {
+  const p = await svc.proofFile(req.params.id);
+  const buf = Buffer.isBuffer(p.data) ? p.data : Buffer.from(p.data.buffer || p.data);
+  res.set({ 'Content-Type': p.mime, 'Content-Length': buf.length, 'Cache-Control': 'private, max-age=86400', 'X-Content-Type-Options': 'nosniff', 'Content-Disposition': 'inline' });
+  res.send(buf);
+}));
+
+// In-transit orders: handed over, tracked through Shipway
+router.get('/transit', wrap(async (req, res) => res.json(await svc.transitList(req.query))));
+router.post('/transit/refresh', wrap(async (req, res) => res.json(await svc.refreshTransit({ ids: Array.isArray(req.body && req.body.orderIds) ? req.body.orderIds : null, limit: 60 }))));
 
 router.get('/shots/:id', wrap(async (req, res) => {
   const s = await svc.shotFile(req.params.id);

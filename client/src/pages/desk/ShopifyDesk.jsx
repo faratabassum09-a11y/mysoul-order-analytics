@@ -7,10 +7,12 @@ import { notifyDesk, useDeskCounts } from './shared.jsx';
 import DeskOverview from './DeskOverview.jsx';
 import DeskOrders from './DeskOrders.jsx';
 import { ConfirmQueue, PendingQueue } from './DeskQueue.jsx';
-import { DispatchQueue, PartialPaid, CancelledOrders } from './DeskLists.jsx';
+import { PartialPaid, CancelledOrders } from './DeskLists.jsx';
+import DispatchBoard from './DispatchBoard.jsx';
+import TransitOrders from './TransitOrders.jsx';
 import DeskSettings from './DeskSettings.jsx';
 
-// Tabs, in the order the team works an order: new orders, confirm calls, pending calls, dispatch, then the two side lists.
+// Tabs, in the order the team works an order: new orders, confirm calls, pending calls, dispatch (slip, packed, handover), in transit, then the side lists.
 function tabsFor(role, c) {
   const n = (v) => (v ? v : null);
   const ALL = ['admin', 'confirmation', 'packing'];
@@ -19,7 +21,8 @@ function tabsFor(role, c) {
     ['orders', 'Shopify orders', null, ALL],
     ['confirm', 'Confirm queue', c && n(c.confirm.total), ['admin', 'confirmation'], c && c.confirm.due],
     ['pending', 'Pending orders', c && n(c.pending.total), ['admin', 'confirmation'], c && c.pending.due],
-    ['dispatch', 'Dispatch queue', c && n(c.dispatch), ['admin', 'packing']],
+    ['dispatch', 'Dispatch queue', c && n(c.dispatch), ['admin', 'packing'], c && c.dispatchSteps && c.dispatchSteps.overdue],
+    ['transit', 'In-transit orders', null, ALL],
     ['partial', 'Partial paid', c && n(c.partial), ['admin', 'confirmation']],
     ['cancelled', 'Cancelled orders', c && n(c.cancelled), ['admin', 'confirmation']],
     ['settings', 'Settings', null, ['admin']],
@@ -68,7 +71,8 @@ export default function ShopifyDesk() {
         <Route path="orders" element={<DeskOrders />} />
         <Route path="confirm" element={guard('confirm', <ConfirmQueue />)} />
         <Route path="pending" element={guard('pending', <PendingQueue />)} />
-        <Route path="dispatch" element={guard('dispatch', <DispatchQueue />)} />
+        <Route path="dispatch" element={guard('dispatch', <DispatchBoard />)} />
+        <Route path="transit" element={guard('transit', <TransitOrders />)} />
         <Route path="partial" element={guard('partial', <PartialPaid />)} />
         <Route path="cancelled" element={guard('cancelled', <CancelledOrders />)} />
         <Route path="settings" element={guard('settings', <DeskSettings />)} />

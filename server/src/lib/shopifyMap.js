@@ -1,5 +1,5 @@
 // Turns one Shopify GraphQL order node into the flat document we store. Pure: no network, no database.
-const ATTRS_V = 1; // bump when the marketing fields change: the next Shopify sync then reloads every order once
+const ATTRS_V = 2; // bump when the mapped fields change (2: fulfillment tracking numbers added): the next Shopify sync then reloads every order once
 const money = (set) => {
   const v = set && set.shopMoney && set.shopMoney.amount;
   return v === undefined || v === null || v === '' ? null : Number(v);
@@ -74,6 +74,20 @@ function normalizeMarketing(list) {
   return out;
 }
 
+// fulfillments [{ trackingInfo: [{ number, company, url }] }] -> flat, de-duplicated list. The first entry is what the Order packed form pre-fills.
+function normalizeTracking(fulfillments) {
+  const out = []; const seen = new Set();
+  for (const f of fulfillments || []) {
+    for (const t of (f && f.trackingInfo) || []) {
+      const number = clean(t && t.number);
+      if (!number || seen.has(number)) continue;
+      seen.add(number);
+      out.push({ number, company: clean(t.company), url: clean(t.url) });
+    }
+  }
+  return out;
+}
+
 function normalizeOrder(n) {
   const orderId = orderIdFromName(n.name);
   if (orderId === null) return null;
@@ -112,10 +126,11 @@ function normalizeOrder(n) {
       state: ship.province || null, zip: ship.zip || null, country: ship.country || null, phone: ship.phone || null,
     },
     items,
+    tracking: normalizeTracking(n.fulfillments),
     marketing: normalizeMarketing(n.customAttributes),
     attrsV: ATTRS_V,
     itemsSummary: items.filter((i) => i.quantity > 0).map((i) => `${i.title}${i.variantTitle ? ` (${i.variantTitle})` : ''} ×${i.quantity}`).join(', '),
   };
 }
 
-module.exports = { normalizeOrder, normalizeMarketing, orderIdFromName, money, ATTRS_V };
+module.exports = { normalizeOrder, normalizeTracking, normalizeMarketing, orderIdFromName, money, ATTRS_V };

@@ -203,3 +203,13 @@ test('campaigns: empty-table diagnosis names the first thing to fix', () => {
   assert.equal(diagnose({ ...base, shopifyOrders: 900, marketingLoaded: 900, matched: 30 }), 'no_utm_on_orders');
   assert.equal(diagnose({ ...base, withUtm: 3 }), null);
 });
+
+test('fulfillment tracking numbers are mapped (first one pre-fills the Order packed form)', () => {
+  const { normalizeTracking } = require('../src/lib/shopifyMap');
+  assert.deepEqual(normalizeTracking(null), []);
+  assert.deepEqual(
+    normalizeTracking([{ trackingInfo: [{ number: ' 1491051082 ', company: 'Delhivery', url: 'https://t/1' }, { number: '1491051082' }] }, { trackingInfo: [{ number: '' }, { number: 'XB77', company: null }] }]),
+    [{ number: '1491051082', company: 'Delhivery', url: 'https://t/1' }, { number: 'XB77', company: '', url: '' }]);
+  assert.equal(normalizeOrder({ name: '#1500', fulfillments: [{ trackingInfo: [{ number: 'ABC123', company: 'Shiprocket' }] }] }).tracking[0].number, 'ABC123');
+  assert.deepEqual(normalizeOrder({ name: '#1501' }).tracking, []);
+});
