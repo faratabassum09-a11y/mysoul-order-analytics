@@ -6,7 +6,7 @@
   "scripts": {
     "start": "node src/index.js",
     "dev": "node --watch src/index.js",
-    "test": "node --test test/core.test.js test/shopify.test.js test/shopifyAuth.test.js test/shipway.test.js test/flow.test.js test/flowService.test.js test/desk.test.js test/dispatch.test.js"
+    "test": "node --test test/core.test.js test/shopify.test.js test/shopifyAuth.test.js test/shipway.test.js test/flow.test.js test/flowService.test.js test/desk.test.js test/dispatch.test.js test/analysis.test.js"
   },
   "engines": {
     "node": ">=18"
@@ -15,6 +15,7 @@
     "cors": "^2.8.5",
     "csv-parse": "^5.5.6",
     "dotenv": "^16.4.5",
+    "exceljs": "^4.4.0",
     "express": "^4.19.2",
     "google-auth-library": "^9.14.0",
     "mongoose": "^8.5.2",

@@ -479,6 +479,39 @@ async function orderDetail(orderId) {
   };
 }
 
+// ---------------------------------------------------------------- analysis sheet (Excel): what happened to each order, all at once
+// q: { orderId } for one order, or the same window / stage / q filters as the Orders list. Capped at 5000 orders.
+async function analysisSheet(q = {}) {
+  await ingestIfStale();
+  const A = require('../lib/analysisSheet');
+  const one = Number(q.orderId);
+  const w = resolveWindow(q.window || 'this_month', new Date(), { from: q.from, to: q.to });
+  const base = { test: { $ne: true } };
+  let scope = `Order #${one}`;
+  if (Number.isInteger(one) && one > 0) base.orderId = one;
+  else {
+    if (w.start) base.createdAt = { $gte: w.start, $lt: w.end };
+    const ids = await searchIds(q.q);
+    if (ids) base.orderId = { $in: ids };
+    scope = `${w.label || 'All time'}${q.stage ? ` · ${STAGE_NAME_FOR_SCOPE(q.stage)}` : ''}${q.q ? ` · search “${String(q.q).slice(0, 40)}”` : ''}`;
+  }
+  const shops = await ShopifyOrder.find(base).select(SHOP_FIELDS).sort({ createdAt: -1 }).limit(5000).lean();
+  const ids = shops.map((s) => s.orderId);
+  const [desks, ships, dconf] = await Promise.all([
+    DeskOrder.find({ orderId: { $in: ids } }).lean(),
+    ShipwayShipment.find({ orderId: { $in: ids }, found: true }).select('orderId status carrier awb statusAt').lean(),
+    getDispatchConfig(),
+  ]);
+  const dBy = new Map(desks.map((d) => [d.orderId, d])); const hBy = new Map(ships.map((h) => [h.orderId, h]));
+  const now = new Date();
+  let rows = shops.map((s) => A.journeyRow({ orderId: s.orderId, shop: s, desk: dBy.get(s.orderId), ship: hBy.get(s.orderId), dconf, now }));
+  const want = String(q.stage || '');
+  if (want && !Number.isInteger(one)) rows = rows.filter((r) => r.stage === want || (want === 'partial' && r.partialAmount > 0));
+  if (Number.isInteger(one) && !rows.length) throw httpErr(404, `Order #${one} was not found`);
+  return { buffer: await A.buildWorkbook(rows, { title: Number.isInteger(one) ? `Order #${one}: what happened` : 'Order analysis', scope }), count: rows.length };
+}
+const STAGE_NAME_FOR_SCOPE = (k) => ({ confirm: 'Confirm queue', pending: 'Pending', dispatch: 'To dispatch', dispatched: 'Dispatched', cancelled: 'Cancelled', partial: 'Partial paid', none: 'Not in queue' }[k] || k);
+
 // ---------------------------------------------------------------- Overview
 async function statsFor(w, now) {
   const base = { test: { $ne: true } };
@@ -535,4 +568,4 @@ function start() {
   }
 }
 
-module.exports = { getConfig, saveConfig, getDispatchConfig, saveDispatchConfig, liveAwb, dispatchBoard, dispatchSlip, dispatchPacked, dispatchHandover, proofFile, transitList, refreshTransit, ingest, ingestIfStale, act, savePartial, shotFile, counts, queue, ordersList, orderDetail, overview, refresh, start, cardOf };
+module.exports = { analysisSheet, getConfig, saveConfig, getDispatchConfig, saveDispatchConfig, liveAwb, dispatchBoard, dispatchSlip, dispatchPacked, dispatchHandover, proofFile, transitList, refreshTransit, ingest, ingestIfStale, act, savePartial, shotFile, counts, queue, ordersList, orderDetail, overview, refresh, start, cardOf };

@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { useApi } from '../../api.js';
+import { api, useApi } from '../../api.js';
 import { FilterBar, Loading } from '../../components.jsx';
 import { useAutoRefresh } from '../../flowUi.js';
 import { useFilters } from '../../filters.jsx';
@@ -20,6 +20,8 @@ export default function DeskOrders() {
   const { data, error, loading, reload } = useApi('/desk/orders', { ...f.params, stage, q: qd, page, limit: 50 }, f.ready);
   useAutoRefresh(reload, 30);
   useEffect(() => { const on = () => reload(); window.addEventListener('desk-refresh', on); return () => window.removeEventListener('desk-refresh', on); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  const [dl, setDl] = useState(''); // '' | 'busy' | error text
+  const download = () => { setDl('busy'); api.download('/desk/analysis.xlsx', { ...f.params, stage, q: qd }, 'order-analysis.xlsx').then(() => setDl(''), (e) => setDl(e.message || 'Download failed')); };
   const sc = (data && data.stageCounts) || {};
   const countFor = (k) => (k === '' ? data && data.summary.orders : k === 'partial' ? null : sc[k] || 0);
   const pages = data ? Math.max(1, Math.ceil(data.total / data.limit)) : 1;
@@ -36,7 +38,8 @@ export default function DeskOrders() {
         <div className="sd-chips" role="tablist" aria-label="Status">
           {FILTERS.map(([k, l]) => <button key={k} role="tab" aria-selected={stage === k} className={`${k} ${stage === k ? 'on' : ''}`} onClick={() => setStage(k)}>{l}{countFor(k) != null && <b>{int(countFor(k))}</b>}</button>)}
         </div>
-        <div className="filters"><input type="search" placeholder="Search order number, name, phone, email or item" value={q} onChange={(e) => setQ(e.target.value)} aria-label="Search" style={{ minWidth: 280 }} /></div>
+        <div className="filters"><input type="search" placeholder="Search order number, name, phone, email or item" value={q} onChange={(e) => setQ(e.target.value)} aria-label="Search" style={{ minWidth: 280 }} />  <button className="btn" onClick={download} disabled={dl === 'busy' || !data || data.total === 0} title="Excel file: one row per order with every call, confirmation, packing step and Shipway status, plus the full activity log">{dl === 'busy' ? 'Preparing…' : 'Download analysis sheet'}</button>{dl && dl !== 'busy' && <span className="muted"> {dl}</span>}
+        </div>
         <Loading error={error} loading={(loading && !data) || !f.ready}>
           {data && (data.total === 0 ? <Empty title="No orders match">{q || stage ? 'Clear the search or status filter, or widen the time window.' : 'No Shopify orders in this time window. Try a longer window, or press Refresh from Shopify.'}</Empty> : (
             <>
