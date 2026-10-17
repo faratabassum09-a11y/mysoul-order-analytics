@@ -33,6 +33,16 @@ router.put('/config', adminOnly, wrap(async (req, res) => res.json(await svc.sav
 router.get('/overview', adminOnly, wrap(async (req, res) => res.json(await svc.overview(req.query))));
 router.post('/refresh', wrap(async (req, res) => res.json(await svc.refresh())));
 
+router.get('/analysis.xlsx', wrap(async (req, res) => {
+  const { buffer, count } = await svc.analysisSheet(req.query);
+  const one = Number(req.query.orderId);
+  res.set({
+    'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    'Content-Disposition': `attachment; filename="${Number.isInteger(one) && one > 0 ? `order-${one}` : 'order-analysis'}.xlsx"`,
+    'Content-Length': buffer.length, 'X-Row-Count': String(count), 'Cache-Control': 'no-store',
+  });
+  res.send(buffer);
+}));
 router.get('/orders', wrap(async (req, res) => res.json(await svc.ordersList(req.query))));
 router.get('/orders/:orderId', wrap(async (req, res) => res.json(await svc.orderDetail(orderIdOf(req)))));
 router.get('/queue/:key', wrap(async (req, res) => res.json(await svc.queue(req.params.key, req.query))));
