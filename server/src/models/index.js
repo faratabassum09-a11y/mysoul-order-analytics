@@ -165,4 +165,36 @@ const FlowProof = mongoose.model('FlowProof', new Schema({
   at: { type: Date, default: Date.now },
 }, { versionKey: false }));
 
-module.exports = { StaffUser, OrderFlow, FlowEvent, FlowProof, Snapshot, ShopifyDate, ShopifyOrder, ShipwayShipment, Order, SyncRun, Setting };
+
+// ---------------------------------------------------------------------------------------------
+// Shopify Desk: orders straight from Shopify, worked through FU1-FU3 -> Pending -> Dispatch / Cancelled.
+// Keyed by Shopify order number. Independent of the sheet-based Confirm Queue above.
+// ---------------------------------------------------------------------------------------------
+const deskOrderSchema = new Schema({
+  orderId: { type: Number, unique: true },
+  orderAt: { type: Date, index: true }, // Shopify created time
+  stage: { type: String, default: 'confirm', index: true }, // confirm | pending | dispatch | dispatched | cancelled
+  fuNo: { type: Number, default: 1 }, // 1..3 inside confirm (FU1-3) and pending (Day 1-3)
+  dueAt: { type: Date, index: true },
+  pendingSince: Date,
+  dnpCount: { type: Number, default: 0 },
+  lastDnpAt: Date,
+  confirmedAt: Date, confirmedAtFu: String, confirmedBy: String,
+  partial: { amount: Number, balance: Number, notes: String, screenshotId: String, at: Date, byName: String, fromFu: String },
+  cancel: { reason: String, note: String, at: Date, byName: String, auto: Boolean, fromStage: String },
+  dispatch: { at: Date, byName: String, awb: String, courier: String, note: String },
+  restoredAt: Date,
+  rev: { type: Number, default: 0 }, // bumps on every change: two people cannot both act on the same card
+  log: [{ _id: false, at: Date, by: String, byId: String, action: String, stage: String, fu: String, label: String, whatsappShared: Boolean, reason: String, amount: Number }],
+}, { timestamps: true, minimize: false });
+deskOrderSchema.index({ stage: 1, fuNo: 1, dueAt: 1 });
+const DeskOrder = mongoose.model('DeskOrder', deskOrderSchema);
+
+// Payment screenshots (partial payments). Kept in MongoDB so they survive redeploys on hosts with a temporary disk.
+const DeskShot = mongoose.model('DeskShot', new Schema({
+  orderId: { type: Number, index: true },
+  mime: String, size: Number, sha256: String, data: Buffer,
+  byName: String, at: { type: Date, default: Date.now },
+}, { versionKey: false }));
+
+module.exports = { DeskOrder, DeskShot, StaffUser, OrderFlow, FlowEvent, FlowProof, Snapshot, ShopifyDate, ShopifyOrder, ShipwayShipment, Order, SyncRun, Setting };

@@ -158,3 +158,30 @@ server/src/services  sheet fetching, sync
 server/src/routes    REST API
 client/src/pages     Overview, Trends, Payment mode, Reasons, Orders, Confirm queue, Dispatch desk, Data issues, Settings, Team sign-in
 ```
+
+## Shopify desk (Shopify-only order workflow)
+
+A separate section in the left menu, **Shopify desk**, with tabs. It reads **only Shopify** (the sheet is not involved) and is independent of the older sheet-based Confirm queue / Dispatch desk, which are unchanged.
+
+| Tab | What it shows |
+| --- | --- |
+| Overview (admin) | Calls due now, confirmed / cancelled rate, where every order is now, orders per day, how FU1 to Day 3 perform, cancel reasons, team activity |
+| Shopify orders | Every Shopify order with full details (click for the drawer: customer, address, items, payment, UTM, partial payment + screenshot, cancel reason, full history) and its desk status |
+| Confirm queue | New orders start at **FU1**. Cards with a Call button and **Update status** (Confirmed, DNP, Partial paid, Cancelled) |
+| Pending orders | Orders with no answer on FU1, FU2 and FU3. Follow-ups **Day 1, Day 2, Day 3** |
+| Dispatch queue | Confirmed and partial paid orders, with the amount to collect on delivery. Mark dispatched |
+| Partial paid | Amount paid, balance, notes and the payment screenshot |
+| Cancelled orders | Full order amount and reason; auto-cancelled orders are marked; admins can restore |
+| Settings (admin) | Follow-up timings, cancel reasons, WhatsApp message, screenshot rule, queue start date |
+
+**The flow.** New Shopify order, then FU1. *DNP* asks "WhatsApp message shared? Yes / No" (with an Open WhatsApp button) and moves the order to FU2, then FU3. A DNP on FU3 moves it to **Pending**. In Pending, Day 1, Day 2 and Day 3 follow-ups come due; a DNP on Day 3 **cancels the order automatically** (reason "No response after 6 follow-ups") and it appears in Cancelled orders. *Confirmed* moves the order to Dispatch. *Partial paid* asks for the amount, a screenshot and notes, then moves it to Dispatch with the balance to collect. *Cancelled* asks for a reason. An order cancelled inside Shopify moves to Cancelled by itself.
+
+**Timings (Settings).** FU1 is due N hours after the order was placed (0 = at once). FU2 and FU3 are due N hours after the previous follow-up was marked DNP (default 0 / 2 / 4 h). Pending Day 1/2/3 are counted from the day the order moved to Pending (default 1 / 2 / 3 days). DNP cannot be logged before the follow-up is due.
+
+**Which orders enter.** Only orders placed on or after **Queue starts from** (Settings; defaults to the day the desk was first opened, so old orders do not flood the queue). Move the date back to bring older orders in.
+
+**Live arrival.** The server already pulls Shopify every 2 minutes (and the desk checks for new orders after every pull). For instant arrival, add two webhooks in the Shopify Dev Dashboard, for `orders/create` and `orders/updated`, pointing to `https://YOUR-SERVER/api/webhook/shopify`. They are verified with the app's client secret. **Refresh from Shopify** pulls on demand.
+
+**Who can do what.** Admin: everything. Confirmation team: Confirm queue, Pending, Partial paid and Cancelled tabs and their actions. Packing team: Dispatch queue. Everyone signs in with their own login; every action is stamped with the person and time.
+
+Tests for the rules: `npm test` (`server/test/desk.test.js`). Two older tests (`core`, `shipway`) already failed before this change.

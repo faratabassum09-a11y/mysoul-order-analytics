@@ -9,7 +9,8 @@ const { startAutoSync } = require('./services/sync');
 
 const app = express();
 app.use(cors());
-app.use(express.json({ limit: '1mb' }));
+// The raw body is kept for the Shopify webhook only: its signature is computed over the exact bytes.
+app.use(express.json({ limit: '1mb', verify: (req, res, buf) => { if (req.originalUrl.startsWith('/api/webhook/shopify')) req.rawBody = buf; } }));
 app.set('trust proxy', 1); // behind Render / Vercel: req.ip is the real caller (used by the sign-in brake)
 
 app.get('/api/health', (req, res) => res.json({ ok: true, db: mongoose.connection.readyState === 1 }));
@@ -29,6 +30,16 @@ app.all('/api/webhook/sheet', (req, res) => {
   if (!cronAuth(req, res)) return;
   sync.requestSync('webhook');
   res.status(202).json({ queued: true });
+});
+// New order in Shopify: Shopify calls this (subscribe orders/create and orders/updated to <server>/api/webhook/shopify) and the order
+// shows up in the Shopify Desk within seconds, instead of waiting for the next 2-minute pull.
+app.post('/api/webhook/shopify', (req, res) => {
+  const { verifyShopifyHmac } = require('./lib/shopifyHmac');
+  if (!verifyShopifyHmac(req.rawBody, req.get('x-shopify-hmac-sha256'), cfg.shopify.clientSecret)) return res.status(401).json({ error: 'Bad signature' });
+  res.status(200).json({ ok: true });
+  const shopifySync = require('./services/shopifySync');
+  shopifySync.kick();
+  setTimeout(() => shopifySync.kick(), 8000); // a second pull in case the first ran before Shopify finished saving the order
 });
 app.all('/api/cron/sync', (req, res) => {
   if (!cronAuth(req, res)) return;
@@ -63,6 +74,7 @@ app.get('/api/shopify/callback', async (req, res) => {
 const teamRoutes = require('./routes/flow');
 app.use('/api/staff', teamRoutes.staff);
 app.use('/api/flow', teamRoutes.flow);
+app.use('/api/desk', require('./routes/desk'));
 
 // Everything else under /api (the analytics dashboard) needs an admin signed in with their own login. There is no shared key.
 app.use('/api', async (req, res, next) => {
@@ -93,4 +105,5 @@ mongoose.connect(cfg.mongoUri).then(() => {
   startAutoSync();
   require('./services/shopifySync').start();
   require('./services/shipwaySync').start();
+  require('./services/deskService').start();
 }).catch((e) => { console.error('[db] connection failed:', e.message); process.exit(1); });
