@@ -185,3 +185,17 @@ A separate section in the left menu, **Shopify desk**, with tabs. It reads **onl
 **Who can do what.** Admin: everything. Confirmation team: Confirm queue, Pending, Partial paid and Cancelled tabs and their actions. Packing team: Dispatch queue. Everyone signs in with their own login; every action is stamped with the person and time.
 
 Tests for the rules: `npm test` (`server/test/desk.test.js`). Two older tests (`core`, `shipway`) already failed before this change.
+
+## Dispatch queue: packing slip, order packed, order handover, in transit
+
+Shopify desk, tab **Dispatch queue** (packing team and admins). A confirmed or partial paid order lands in the first of three columns. Press **DONE** on its card to move it right:
+
+1. **Packing slip**: print the slip, stick it on the box, press DONE. One tap.
+2. **Order packed**: DONE opens a form with the **AWB filled from Shopify** (the fulfillment tracking number; if Shopify has none yet it uses the Shipway AWB, else the person types or scans it) and a **photo of the package**. The server checks the AWB format, refuses an AWB already used on another order, and checks the file really is a photo.
+3. **Order handover**: DONE opens a form for the **photo of the manifest**. Tick several cards and press *Hand over selected* to cover a whole courier pickup with one manifest photo. Orders then leave the queue.
+
+Then **In-transit orders** lists everything handed over, with the Shipway status, AWB, courier, days since handover and the manifest photo. **Fetch Shipway status** refreshes the orders on screen right now; the server also refreshes them on its own (same rhythm as `SHIPWAY_SYNC_INTERVAL_MIN`).
+
+**Settings (admin, Shopify desk > Settings > Dispatch queue, or the gear on the queue).** Each column has its own: **due time**, **working days allowed** and **photo required**. Defaults: packing slip 12:00 PM, order packed 12:00 PM, order handover 6:00 PM, all "same working day". A deadline counts from the moment the order entered that column; if that moment is already after the cut-off, the next working day applies. Working days (default Mon to Sat) and a holiday list are set in the same place. Cards turn red when overdue and the tab shows how many are late. Every step records who did it, when, and whether it was late (visible in the order drawer, with both photos).
+
+**Needs:** the Shopify app must be able to read fulfillments (`read_orders` covers the order's tracking numbers). After deploying, the next Shopify sync does **one full reload** of orders to pick up tracking numbers. In-transit status needs `SHIPWAY_USERNAME` and `SHIPWAY_LICENSE_KEY` (see *Shipway* above).

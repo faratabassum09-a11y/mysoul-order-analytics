@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { api, deskShotUrl, useApi } from '../../api.js';
+import { api, deskProofUrl, deskShotUrl, useApi } from '../../api.js';
 import { Sheet } from '../../deskUi.jsx';
 import { compressPhoto, duration, fmtWhen, useNow, useServerOffset } from '../../flowUi.js';
 import { inr } from '../../format.js';
@@ -71,9 +71,17 @@ export function ShotImg({ id, alt = 'Payment screenshot', onOpen }) {
   if (!src) return <span className="muted">Loading screenshot…</span>;
   return <button className="sd-shot" onClick={() => onOpen ? onOpen(src) : window.open(src, '_blank', 'noopener')} aria-label="Open payment screenshot"><img src={src} alt={alt} loading="lazy" /></button>;
 }
-export function Lightbox({ src, onClose }) {
+// A dispatch queue photo (package or manifest). Tap to enlarge.
+export function ProofImg({ id, alt = 'Photo', onOpen }) {
+  const [src, setSrc] = useState(null); const [err, setErr] = useState(false);
+  useEffect(() => { let live = true; deskProofUrl(id).then((u) => live && setSrc(u), () => live && setErr(true)); return () => { live = false; }; }, [id]);
+  if (err) return <span className="muted">Photo could not be loaded</span>;
+  if (!src) return <span className="muted">Loading photo…</span>;
+  return <button className="sd-shot" onClick={() => onOpen ? onOpen(src, alt) : window.open(src, '_blank', 'noopener')} aria-label={`Open ${alt.toLowerCase()}`}><img src={src} alt={alt} loading="lazy" /></button>;
+}
+export function Lightbox({ src, onClose, title = 'Payment screenshot' }) {
   useEffect(() => { const k = (e) => e.key === 'Escape' && onClose(); window.addEventListener('keydown', k); return () => window.removeEventListener('keydown', k); }, [onClose]);
-  return <div className="lightbox" role="dialog" aria-modal="true" aria-label="Payment screenshot"><div className="lb-top"><span>Payment screenshot</span><button className="btn ghost" onClick={onClose}>Close</button></div><div className="lb-body"><img src={src} alt="Payment screenshot" /></div><div className="lb-bottom" /></div>;
+  return <div className="lightbox" role="dialog" aria-modal="true" aria-label={title}><div className="lb-top"><span>{title}</span><button className="btn ghost" onClick={onClose}>Close</button></div><div className="lb-body"><img src={src} alt={title} /></div><div className="lb-bottom" /></div>;
 }
 
 export function CopyButton({ text, label = 'Copy', done = 'Copied' }) {
@@ -215,25 +223,6 @@ function PartialForm({ o, conf, busy, onSave }) {
   );
 }
 
-// ---------------------------------------------------------------- dispatch sheet
-export function DispatchSheet({ order: o, onClose, onDone, show }) {
-  const [awb, setAwb] = useState(''); const [courier, setCourier] = useState(''); const [note, setNote] = useState(''); const [busy, setBusy] = useState(false);
-  const save = async () => {
-    setBusy(true);
-    try { await api.post(`/desk/orders/${o.orderId}/action`, { action: 'dispatch', awb, courier, note }); notifyDesk(); show(`${o.orderName} marked dispatched.`); onDone(); }
-    catch (e) { show(e.message, 'err'); if (e.status === 409) onDone(); } finally { setBusy(false); }
-  };
-  return (
-    <Sheet title={`Mark dispatched · ${o.orderName}`} onClose={onClose}>
-      <p className="muted">Courier and AWB are optional. Shipway status is read from Shipway on its own.</p>
-      <label className="sheet-label" htmlFor="dc">Courier</label><input id="dc" type="text" value={courier} maxLength={60} onChange={(e) => setCourier(e.target.value)} />
-      <label className="sheet-label" htmlFor="da">AWB number</label><input id="da" type="text" value={awb} maxLength={60} onChange={(e) => setAwb(e.target.value)} />
-      <label className="sheet-label" htmlFor="dn">Note</label><textarea id="dn" className="sd-text" rows={2} maxLength={300} value={note} onChange={(e) => setNote(e.target.value)} />
-      <button className="btn big good" disabled={busy} onClick={save}>Mark dispatched</button>
-    </Sheet>
-  );
-}
-
 // ---------------------------------------------------------------- the card in Confirm queue and Pending
 export function QueueCard({ o, now, offset, canAct, onUpdate, onOpen }) {
   const late = o.dueAt && new Date(o.dueAt).getTime() < now + offset - (o.stage === 'pending' ? 6 : 2) * 3600e3;
@@ -269,6 +258,7 @@ const D = (s) => (s ? new Date(s).toLocaleString('en-IN', { dateStyle: 'medium',
 export function OrderDrawer({ orderId, onClose }) {
   const { data, error, loading } = useApi(`/desk/orders/${orderId}`);
   const [shot, setShot] = useState(null);
+  const [proof, setProof] = useState(null); // { src, title }
   useEffect(() => { const k = (e) => e.key === 'Escape' && onClose(); window.addEventListener('keydown', k); return () => window.removeEventListener('keydown', k); }, [onClose]);
   const c = data && data.card; const s = data && data.shopify;
   const m = (s && s.marketing) || {};
@@ -320,6 +310,16 @@ export function OrderDrawer({ orderId, onClose }) {
             )}
             {c.cancel && <div className="sd-box bad"><b>Cancelled: {c.cancel.reason}</b><span>{c.cancel.auto ? 'Automatically' : `By ${c.cancel.byName}`} · {D(c.cancel.at)}{c.cancel.fromStage ? ` · from ${STAGE_NAME[c.cancel.fromStage] || c.cancel.fromStage}` : ''}</span>{c.cancel.note && <span>“{c.cancel.note}”</span>}{c.refundDue && <span><b>Refund due:</b> {inr(c.partial.amount)} was received before the cancellation.</span>}</div>}
             {c.dispatch && <div className="sd-box good"><b>Dispatched {D(c.dispatch.at)}</b><span>By {c.dispatch.byName}{c.dispatch.courier ? ` · ${c.dispatch.courier}` : ''}{c.dispatch.awb ? ` · AWB ${c.dispatch.awb}` : ''}</span>{c.dispatch.note && <span>“{c.dispatch.note}”</span>}</div>}
+            {c.dq && (c.dq.slip || c.dq.packed || c.dq.handover) && (
+              <div className="sd-box">
+                <b>Dispatch queue</b>
+                {c.dq.slip && <span>Packing slip done · {c.dq.slip.byName} · {D(c.dq.slip.at)}{c.dq.slip.late ? ' · late' : ''}</span>}
+                {c.dq.packed && <span>Packed · {c.dq.packed.byName} · {D(c.dq.packed.at)} · AWB {c.dq.packed.awb}{c.dq.packed.late ? ' · late' : ''}</span>}
+                {c.dq.packed && c.dq.packed.photoId && <ProofImg id={c.dq.packed.photoId} alt="Photo of the package" onOpen={(src, title) => setProof({ src, title })} />}
+                {c.dq.handover && <span>Handed over · {c.dq.handover.byName} · {D(c.dq.handover.at)}{c.dq.handover.late ? ' · late' : ''}</span>}
+                {c.dq.handover && c.dq.handover.manifestId && <ProofImg id={c.dq.handover.manifestId} alt="Photo of the manifest" onOpen={(src, title) => setProof({ src, title })} />}
+              </div>
+            )}
             {data.shipway && <p className="muted">Shipway: <b>{data.shipway.status}</b>{data.shipway.carrier ? ` · ${data.shipway.carrier}` : ''}{data.shipway.awb ? ` · AWB ${data.shipway.awb}` : ''}</p>}
 
             {(m.hasUtm || m.landingPath) && (
@@ -353,6 +353,7 @@ export function OrderDrawer({ orderId, onClose }) {
           </>
         )}
         {shot && <Lightbox src={shot} onClose={() => setShot(null)} />}
+        {proof && <Lightbox src={proof.src} title={proof.title} onClose={() => setProof(null)} />}
       </aside>
     </>
   );

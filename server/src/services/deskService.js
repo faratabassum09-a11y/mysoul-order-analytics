@@ -1,8 +1,9 @@
 // Shopify Desk: reads orders from Shopify only, keeps one DeskOrder per order, and applies the rules in lib/desk.js.
 // Every change is checked against the state the person saw (rev), stamped with who did it, and appended to the order's log.
 const crypto = require('crypto');
-const { DeskOrder, DeskShot, ShopifyOrder, ShipwayShipment, Setting } = require('../models');
+const { DeskOrder, DeskShot, DispatchProof, ShopifyOrder, ShipwayShipment, Setting } = require('../models');
 const D = require('../lib/desk');
+const DP = require('../lib/dispatch');
 const F = require('../lib/flow');
 const { resolveWindow } = require('../lib/windows');
 const { parseYmd, fmtDate } = require('../lib/istTime');
@@ -134,6 +135,7 @@ function cardOf(desk, shop, conf, ship) {
     partial: desk.partial && desk.partial.amount ? desk.partial : null, cancel: desk.cancel && desk.cancel.reason ? desk.cancel : null,
     dispatch: desk.dispatch && desk.dispatch.at ? desk.dispatch : null, confirmedAt: desk.confirmedAt || null, confirmedAtFu: desk.confirmedAtFu || '',
     shipway: ship ? { status: ship.status, group: ship.group, carrier: ship.carrier, awb: ship.awb } : null,
+    dq: desk.dq && desk.dq.step ? { step: desk.dq.step, slip: desk.dq.slip || null, packed: desk.dq.packed || null, handover: desk.dq.handover || null } : null,
     refundDue: !!(desk.stage === 'cancelled' && desk.partial && desk.partial.amount),
   };
 }
@@ -183,6 +185,8 @@ async function counts(now = new Date()) {
     } else out[stage] = (out[stage] || 0) + r.n;
   }
   out.partial = await DeskOrder.countDocuments({ 'partial.amount': { $gt: 0 } });
+  const [inQueue, dconf] = await Promise.all([DeskOrder.find({ stage: 'dispatch' }).select('orderId dq confirmedAt orderAt').lean(), getDispatchConfig()]);
+  out.dispatchSteps = DP.stepCounts(inQueue, dconf, now); // { slip, packed, handover, overdue, overdueBy }
   return out;
 }
 
@@ -216,6 +220,205 @@ async function queue(key, opts = {}) {
       : { orders: all.length, collected: D.rupees(all.filter((d) => d.cancel == null || !d.cancel.reason).reduce((n, d) => n + ((d.partial && d.partial.amount) || 0), 0)), balance: D.rupees(all.filter((d) => d.cancel == null || !d.cancel.reason).reduce((n, d) => n + ((d.partial && d.partial.balance) || 0), 0)) };
   }
   return { now, total, page, limit, items, counts: c, sums };
+}
+
+
+// ---------------------------------------------------------------- Dispatch queue: packing slip -> order packed -> order handover -> in-transit
+async function getDispatchConfig() {
+  const s = await Setting.findOne({ key: 'desk.dispatch' }).lean();
+  return DP.normaliseDispatchConfig((s && s.value) || {}, DP.DEFAULT_DISPATCH_CONFIG);
+}
+async function saveDispatchConfig(body) {
+  const next = DP.normaliseDispatchConfig(body || {}, await getDispatchConfig());
+  await Setting.findOneAndUpdate({ key: 'desk.dispatch' }, { key: 'desk.dispatch', value: next }, { upsert: true });
+  return next;
+}
+
+// Reads one order's tracking number(s) straight from Shopify (the packing person may open the form seconds after the label was made).
+async function liveAwb(orderId) {
+  const have = await ShopifyOrder.findOne({ orderId }).select('tracking').lean();
+  let tracking = (have && have.tracking) || [];
+  const client = require('./shopifyClient');
+  if (client.isConfigured()) {
+    try {
+      const node = await client.fetchByNumber(orderId);
+      const doc = node && require('../lib/shopifyMap').normalizeOrder(node);
+      if (doc && doc.orderId === orderId) {
+        tracking = doc.tracking || [];
+        await ShopifyOrder.updateOne({ orderId }, { $set: { tracking } });
+      }
+    } catch (e) { /* Shopify busy or offline: fall back to what is saved */ }
+  }
+  const ship = await ShipwayShipment.findOne({ orderId, found: true }).select('awb carrier').lean();
+  const t = tracking[0];
+  if (t && t.number) return { awb: t.number, courier: t.company || (ship && ship.carrier) || '', source: 'Shopify' };
+  if (ship && ship.awb) return { awb: ship.awb, courier: ship.carrier || '', source: 'Shipway' };
+  return { awb: '', courier: '', source: null };
+}
+
+async function dispatchBoard(opts = {}) {
+  await ingestIfStale();
+  const now = new Date();
+  const dconf = await getDispatchConfig();
+  const filter = { stage: 'dispatch' };
+  const ids = await searchIds(opts.q);
+  if (ids) filter.orderId = { $in: ids };
+  const desks = await DeskOrder.find(filter).sort({ confirmedAt: 1 }).limit(500).lean();
+  const orderIds = desks.map((d) => d.orderId);
+  const [cards, trk, all] = await Promise.all([
+    withShop(desks, { ship: true }),
+    ShopifyOrder.find({ orderId: { $in: orderIds } }).select('orderId tracking').lean(),
+    DeskOrder.find({ stage: 'dispatch' }).select('orderId dq confirmedAt orderAt').lean(),
+  ]);
+  const tBy = new Map(trk.map((x) => [x.orderId, x.tracking || []]));
+  const columns = { slip: [], packed: [], handover: [] };
+  cards.forEach((c, i) => {
+    const d = desks[i]; const step = DP.stepOf(d); const due = DP.dueAt(d, dconf);
+    const t = (tBy.get(c.orderId) || [])[0];
+    columns[step].push({
+      ...c,
+      dq: {
+        step, stepAt: DP.stepStart(d), dueAt: due, overdue: !!due && due.getTime() < now.getTime(),
+        slip: (d.dq && d.dq.slip) || null, packed: (d.dq && d.dq.packed) || null,
+        suggestedAwb: (t && t.number) || (c.shipway && c.shipway.awb) || '',
+        suggestedCourier: (t && t.company) || (c.shipway && c.shipway.carrier) || '',
+      },
+    });
+  });
+  for (const k of DP.STEPS) columns[k].sort((a, b) => new Date(a.dq.dueAt || 0) - new Date(b.dq.dueAt || 0));
+  const collect = cards.reduce((n, c) => n + (c.collect || 0), 0);
+  return { now, config: dconf, columns, counts: DP.stepCounts(all, dconf, now), collectTotal: D.rupees(collect), shown: cards.length };
+}
+
+async function dispatchSlip(user, orderId) {
+  const { doc } = await loadForAction(orderId);
+  const t = DP.slipDone(doc, await getDispatchConfig(), user);
+  return brief(await applyTransition(doc, t));
+}
+
+const PHOTO_ERR = 'The file must be a photo (JPG, PNG or WebP).';
+async function storeProof(kind, file, user, extra) {
+  return DispatchProof.create({ kind, ...extra, mime: F.mimeOf(file.buffer), size: file.buffer.length, sha256: crypto.createHash('sha256').update(file.buffer).digest('hex'), data: file.buffer, byName: user.name });
+}
+
+async function dispatchPacked(user, orderId, { awb, courier, file }) {
+  const { doc } = await loadForAction(orderId);
+  const dconf = await getDispatchConfig();
+  if (file && F.sniffMedia(file.buffer) !== 'photo') throw httpErr(400, PHOTO_ERR);
+  const input = { awb, courier, photoId: file ? 'pending' : null };
+  DP.packedDone(doc, input, dconf, user); // dry run: every rule is checked before anything is stored
+  const clean = DP.cleanAwb(awb);
+  const clash = await DeskOrder.findOne({ orderId: { $ne: orderId }, 'dq.packed.awb': clean }).select('orderId').lean();
+  if (clash) throw httpErr(409, `AWB ${clean} is already on order #${clash.orderId}. Check the number on the label.`);
+  const proof = file ? await storeProof('package', file, user, { orderId }) : null;
+  try {
+    const t = DP.packedDone(doc, { awb, courier, photoId: proof ? String(proof._id) : null }, dconf, user);
+    return brief(await applyTransition(doc, t));
+  } catch (e) {
+    if (proof) await DispatchProof.deleteOne({ _id: proof._id }).catch(() => {});
+    throw e;
+  }
+}
+
+// One manifest photo can cover a whole courier pickup: orderIds is every order on it. All are checked first, then saved.
+async function dispatchHandover(user, orderIds, { courier, file }) {
+  const ids = [...new Set((orderIds || []).map(Number).filter((n) => Number.isInteger(n) && n > 0))];
+  if (!ids.length) throw httpErr(400, 'Pick at least one order');
+  if (ids.length > DP.MAX_HANDOVER_BATCH) throw httpErr(400, `Hand over at most ${DP.MAX_HANDOVER_BATCH} orders on one manifest`);
+  const dconf = await getDispatchConfig();
+  if (file && F.sniffMedia(file.buffer) !== 'photo') throw httpErr(400, PHOTO_ERR);
+  const docs = await DeskOrder.find({ orderId: { $in: ids } }).lean();
+  const by = new Map(docs.map((d) => [d.orderId, d]));
+  const problems = [];
+  for (const id of ids) {
+    const d = by.get(id);
+    if (!d) { problems.push(`#${id}: not in the Shopify Desk`); continue; }
+    try { DP.handoverDone(d, { courier, manifestId: file ? 'pending' : null }, dconf, user); } catch (e) { problems.push(`#${id}: ${e.message}`); }
+  }
+  if (problems.length) throw httpErr(409, `Nothing was saved. ${problems.join(' ')}`);
+  const proof = file ? await storeProof('manifest', file, user, { orderIds: ids }) : null;
+  const done = []; const failed = [];
+  for (const id of ids) {
+    try {
+      const t = DP.handoverDone(by.get(id), { courier, manifestId: proof ? String(proof._id) : null }, dconf, user);
+      done.push(brief(await applyTransition(by.get(id), t)));
+    } catch (e) { failed.push({ orderId: id, error: e.message }); }
+  }
+  if (!done.length && proof) await DispatchProof.deleteOne({ _id: proof._id }).catch(() => {});
+  return { done, failed };
+}
+
+async function proofFile(id) {
+  if (!/^[0-9a-f]{24}$/i.test(String(id))) throw httpErr(404, 'Photo not found');
+  const p = await DispatchProof.findById(id).lean();
+  if (!p) throw httpErr(404, 'Photo not found');
+  return p;
+}
+
+// ---------------------------------------------------------------- In-transit orders (handed over, tracked through Shipway)
+const TRANSIT_GROUPS = ['transit', 'ndr', 'rto', 'delivered', 'other'];
+async function transitList(opts = {}) {
+  await ingestIfStale();
+  const filter = { stage: 'dispatched' };
+  const ids = await searchIds(opts.q);
+  if (ids) filter.orderId = { $in: ids };
+  const desks = await DeskOrder.find(filter).sort({ 'dispatch.at': -1 }).limit(3000).lean();
+  const orderIds = desks.map((d) => d.orderId);
+  const [shops, ships, conf] = await Promise.all([
+    ShopifyOrder.find({ orderId: { $in: orderIds } }).select(SHOP_FIELDS).lean(),
+    ShipwayShipment.find({ orderId: { $in: orderIds }, found: true }).select('orderId status statusCode group final carrier awb statusAt checkedAt').lean(),
+    getConfig(),
+  ]);
+  const sBy = new Map(shops.map((x) => [x.orderId, x])); const hBy = new Map(ships.map((x) => [x.orderId, x]));
+  const now = Date.now();
+  const rows = desks.map((d) => {
+    const h = hBy.get(d.orderId); const c = cardOf(d, sBy.get(d.orderId), conf, h);
+    const at = d.dispatch && d.dispatch.at;
+    return {
+      orderId: c.orderId, orderName: c.orderName, name: c.name, phone: c.phone, city: c.city, state: c.state, total: c.total, collect: c.collect, payment: c.payment, items: c.items,
+      handedOverAt: at || null, handedOverBy: d.dispatch && d.dispatch.byName, awb: (h && h.awb) || (d.dispatch && d.dispatch.awb) || '', courier: (h && h.carrier) || (d.dispatch && d.dispatch.courier) || '',
+      manifestId: (d.dq && d.dq.handover && d.dq.handover.manifestId) || null, packagePhotoId: (d.dq && d.dq.packed && d.dq.packed.photoId) || null,
+      shipway: h ? { status: h.status, code: h.statusCode, group: h.group || 'other', final: !!h.final, statusAt: h.statusAt, checkedAt: h.checkedAt } : null,
+      days: at ? Math.max(0, Math.floor((now - new Date(at).getTime()) / 864e5)) : null,
+    };
+  });
+  const counts = { all: rows.length, none: 0 }; TRANSIT_GROUPS.forEach((g) => { counts[g] = 0; });
+  for (const r of rows) { if (!r.shipway) counts.none++; else counts[TRANSIT_GROUPS.includes(r.shipway.group) ? r.shipway.group : 'other']++; }
+  const g = String(opts.group || '');
+  const shown = !g ? rows : g === 'none' ? rows.filter((r) => !r.shipway) : rows.filter((r) => r.shipway && (TRANSIT_GROUPS.includes(r.shipway.group) ? r.shipway.group : 'other') === g);
+  const limit = Math.min(200, Math.max(1, parseInt(opts.limit) || 50));
+  const page = Math.max(1, parseInt(opts.page) || 1);
+  const client = require('./shipwayClient');
+  return { now: new Date(), total: shown.length, page, limit, items: shown.slice((page - 1) * limit, page * limit), counts, shipwayConfigured: client.isConfigured() };
+}
+
+// Ask Shipway about handed-over orders whose status can still change. ids = specific orders (the button); otherwise the oldest-checked ones (the timer).
+let transitBusy = false;
+async function refreshTransit({ ids = null, limit = 60, minAgeMin = 0 } = {}) {
+  const client = require('./shipwayClient');
+  if (!client.isConfigured()) throw httpErr(400, 'Shipway is not connected yet. Add the Shipway login in the server settings.');
+  if (transitBusy) throw httpErr(409, 'Shipway status is already being fetched. Try again in a moment.');
+  transitBusy = true;
+  try {
+    const shipSync = require('./shipwaySync');
+    let want = ids && ids.length ? ids.map(Number).filter(Number.isInteger) : (await DeskOrder.find({ stage: 'dispatched' }).sort({ 'dispatch.at': -1 }).limit(3000).select('orderId').lean()).map((d) => d.orderId);
+    const have = await ShipwayShipment.find({ orderId: { $in: want } }).select('orderId final checkedAt').lean();
+    const hBy = new Map(have.map((h) => [h.orderId, h]));
+    want = want.filter((id) => { const h = hBy.get(id); return !h || (!h.final && Date.now() - new Date(h.checkedAt || 0).getTime() >= minAgeMin * 60000); });
+    want.sort((a, b) => new Date((hBy.get(a) || {}).checkedAt || 0) - new Date((hBy.get(b) || {}).checkedAt || 0)); // never-checked first, then the stalest
+    const queue = want.slice(0, Math.min(limit, 200));
+    let checked = 0; let changed = 0; let failed = 0; let authErr = null;
+    const worker = async () => {
+      while (queue.length && !authErr) {
+        const id = queue.shift();
+        try { const r = await shipSync.refreshOne(id); checked++; if (r.error) failed++; else if (r.changed) changed++; } catch (e) { authErr = e; }
+        await new Promise((r) => setTimeout(r, 120));
+      }
+    };
+    await Promise.all([worker(), worker(), worker()]);
+    if (authErr) throw httpErr(502, authErr.message || 'Shipway refused the login');
+    return { checked, changed, failed, remaining: Math.max(0, want.length - checked) };
+  } finally { transitBusy = false; }
 }
 
 // ---------------------------------------------------------------- all Shopify orders
@@ -324,6 +527,12 @@ async function refresh() {
 function start() {
   setTimeout(() => ingestIfStale(0), 15000);
   setInterval(() => ingestIfStale(0), 60 * 1000);
+  const every = require('../config').shipway.syncIntervalMin; // the same rhythm as the Shipway sync (0 = only by button)
+  if (every > 0 && require('./shipwayClient').isConfigured()) {
+    const tick = () => refreshTransit({ limit: 80, minAgeMin: Math.min(30, every) }).catch((e) => { if (e.status !== 409) console.warn('[desk] in-transit refresh failed:', e.message); });
+    setTimeout(tick, 45000);
+    setInterval(tick, every * 60 * 1000);
+  }
 }
 
-module.exports = { getConfig, saveConfig, ingest, ingestIfStale, act, savePartial, shotFile, counts, queue, ordersList, orderDetail, overview, refresh, start, cardOf };
+module.exports = { getConfig, saveConfig, getDispatchConfig, saveDispatchConfig, liveAwb, dispatchBoard, dispatchSlip, dispatchPacked, dispatchHandover, proofFile, transitList, refreshTransit, ingest, ingestIfStale, act, savePartial, shotFile, counts, queue, ordersList, orderDetail, overview, refresh, start, cardOf };

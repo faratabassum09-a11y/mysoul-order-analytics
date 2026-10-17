@@ -4,61 +4,12 @@ import { Loading } from '../../components.jsx';
 import { Sheet, useToast } from '../../deskUi.jsx';
 import { useAutoRefresh, fmtWhen } from '../../flowUi.js';
 import { inr } from '../../format.js';
-import { can, useStaff } from '../../staff.jsx';
-import { fmtPhone, CopyButton, DispatchSheet, Empty, Lightbox, OrderDrawer, PayTag, ShotImg, StageTag, addressBlock, notifyDesk, useDebounced, usePager } from './shared.jsx';
+import { useStaff } from '../../staff.jsx';
+import { fmtPhone, Empty, Lightbox, OrderDrawer, ShotImg, StageTag, notifyDesk, useDebounced, usePager } from './shared.jsx';
 
 const useRefreshEvent = (reload) => useEffect(() => { const on = () => reload(); window.addEventListener('desk-refresh', on); return () => window.removeEventListener('desk-refresh', on); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 const Search = ({ q, setQ }) => <input type="search" placeholder="Search order number, name or phone" value={q} onChange={(e) => setQ(e.target.value)} aria-label="Search" />;
 const Stat = ({ label, value, tone, sub }) => <div className={`sd-stat ${tone || ''}`}><span>{label}</span><b>{value}</b>{sub && <small>{sub}</small>}</div>;
-
-// ---------------------------------------------------------------- Dispatch queue
-const SHIP_TAG = { delivered: 'Delivered', transit: 'In', ndr: 'Pending', rto: 'RTO' };
-export function DispatchQueue() {
-  const { user } = useStaff();
-  const actor = can(user, 'packing');
-  const [section, setSection] = useState('todo');
-  const [q, setQ] = useState(''); const qd = useDebounced(q);
-  const { data, error, loading, reload } = useApi('/desk/queue/dispatch', { section, q: qd, limit: 200 });
-  useAutoRefresh(reload, 25); useRefreshEvent(reload);
-  const [sheet, setSheet] = useState(null); const [open, setOpen] = useState(null); const [toast, show] = useToast();
-  const items = data ? data.items : [];
-  const c = data && data.counts;
-  const collectTotal = useMemo(() => items.reduce((n, o) => n + (o.collect || 0), 0), [items]);
-  return (
-    <section>
-      <p className="sd-hint">Confirmed and partial paid orders wait here until they are handed to the courier. “Collect” is what the courier takes at the door.</p>
-      <div className="sd-seg" role="tablist">
-        <button role="tab" aria-selected={section === 'todo'} className={section === 'todo' ? 'on' : ''} onClick={() => setSection('todo')}>To dispatch {c ? <b>{c.dispatch}</b> : null}</button>
-        <button role="tab" aria-selected={section === 'done'} className={section === 'done' ? 'on' : ''} onClick={() => setSection('done')}>Dispatched {c ? <b>{c.dispatched}</b> : null}</button>
-      </div>
-      <div className="filters"><Search q={q} setQ={setQ} /><span className="grow" />{section === 'todo' && data && <span className="muted">{items.length} {items.length === 1 ? 'order' : 'orders'} · {inr(collectTotal)} to collect on delivery</span>}</div>
-      <Loading error={error} loading={loading && !data}>
-        {data && (items.length === 0 ? <Empty title={section === 'todo' ? 'Nothing waiting to dispatch' : 'No dispatched orders yet'}>{section === 'todo' ? 'Confirmed orders show up here the moment someone taps Confirmed.' : 'Orders you mark as dispatched are listed here.'}</Empty> : (
-          <div className="sd-grid">
-            {items.map((o) => (
-              <article key={o.orderId} className={`sd-card ${o.stage} ${o.partial ? 'partial' : ''}`}>
-                <header><div className="sd-id"><button className="link" onClick={() => setOpen(o.orderId)}>{o.orderName}</button><PayTag o={o} />{o.partial && <span className="sd-pay part">Partial paid</span>}</div><span className="muted">{section === 'todo' ? `Confirmed ${fmtWhen(o.confirmedAt)}${o.confirmedAtFu ? ` on ${o.confirmedAtFu}` : ''}` : `Dispatched ${fmtWhen(o.dispatch && o.dispatch.at)}`}</span></header>
-                <div className="sd-who"><b>{o.name || 'No name'}</b><span className="muted"> · {fmtPhone(o.phone)}</span></div>
-                <div className="sd-addr">{o.address || 'No address'}</div>
-                <div className="sd-line"><span className="sd-amt">{inr(o.total)}</span><span className="sd-items" title={o.items}>{o.items}</span></div>
-                <div className={`sd-collect ${o.collect > 0 ? 'cod' : 'paid'}`}>{o.collect > 0 ? <>Collect <b>{inr(o.collect)}</b> on delivery{o.partial ? ` (customer already paid ${inr(o.partial.amount)})` : ''}</> : 'Nothing to collect: fully paid'}</div>
-                {o.shipway && <div className="sd-foot"><span>Shipway: <span className={`tag ${SHIP_TAG[o.shipway.group] || ''}`}>{o.shipway.status}</span></span>{o.shipway.awb && <span>AWB {o.shipway.awb}</span>}</div>}
-                {section === 'done' && o.dispatch && (o.dispatch.awb || o.dispatch.courier) && <div className="sd-foot"><span>{[o.dispatch.courier, o.dispatch.awb && `AWB ${o.dispatch.awb}`].filter(Boolean).join(' · ')}</span></div>}
-                <div className="sd-actions">
-                  <CopyButton text={addressBlock(o)} label="Copy address" />
-                  {section === 'todo' && actor && <button className="btn good" onClick={() => setSheet(o)}>Mark dispatched</button>}
-                </div>
-              </article>
-            ))}
-          </div>
-        ))}
-      </Loading>
-      {sheet && <DispatchSheet order={sheet} show={show} onClose={() => setSheet(null)} onDone={() => { setSheet(null); reload(); }} />}
-      {open && <OrderDrawer orderId={open} onClose={() => setOpen(null)} />}
-      {toast}
-    </section>
-  );
-}
 
 // ---------------------------------------------------------------- Partial paid
 export function PartialPaid() {

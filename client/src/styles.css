@@ -422,6 +422,24 @@ tr.click { cursor: pointer; } tr.click:hover td { background: #f8f9f6; }
 .sd-code { display: block; padding: 10px 12px; background: var(--ink); color: #d8e2ee; border-radius: 8px; overflow-x: auto; font-size: 13px; }
 .sd-savebar { position: sticky; bottom: 0; padding: 18px 0 12px; background: linear-gradient(0deg, var(--paper) 70%, transparent); } .sd-savebar .btn { max-width: 320px; }
 
+/* dispatch queue: packing slip | order packed | order handover */
+.dq-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; flex-wrap: wrap; } .dq-head .sd-hint { flex: 1 1 360px; }
+.dq-board { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; align-items: start; }
+.dq-col { background: var(--line-2); border-radius: 14px; padding: 12px; display: grid; gap: 12px; min-width: 0; border-top: 5px solid var(--ink-3); }
+.dq-col.slip { border-top-color: var(--fu1); } .dq-col.packed { border-top-color: var(--pend); } .dq-col.handover { border-top-color: var(--disp); }
+.dq-colhead { display: grid; gap: 4px; } .dq-colhead small { color: var(--ink-3); line-height: 1.4; }
+.dq-title { display: flex; align-items: center; gap: 8px; } .dq-title h2 { margin: 0; font-size: 17px; letter-spacing: -.01em; }
+.dq-gear { margin-left: auto; text-decoration: none; color: var(--ink-3); font-size: 18px; padding: 2px 6px; border-radius: 6px; } .dq-gear:hover { color: var(--ink); background: rgba(0,0,0,.06); }
+.dq-when { display: inline-block; justify-self: start; font-size: 12px; font-weight: 700; padding: 2px 9px; border-radius: 99px; background: var(--surface); color: var(--ink-2); border: 1px solid var(--line); }
+.dq-bulk { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 4px; } .dq-bulk .btn { min-height: 40px; }
+.dq-cards { display: grid; gap: 12px; min-width: 0; }
+.dq-card { border-left-color: var(--ink-3); } .dq-col.slip .dq-card { border-left-color: var(--fu1); } .dq-col.packed .dq-card { border-left-color: var(--pend); } .dq-col.handover .dq-card { border-left-color: var(--disp); }
+.dq-card.late { border-left-color: var(--cancel) !important; }
+.dq-pick { width: 20px; height: 20px; }
+.dq-done { font-size: 16px; letter-spacing: .06em; }
+.dq-list { list-style: none; margin: 0 0 6px; padding: 0; display: grid; gap: 4px; } .dq-list li { display: flex; justify-content: space-between; gap: 10px; padding: 7px 10px; background: var(--line-2); border-radius: 8px; } .dq-list span { color: var(--ink-2); }
+@media (max-width: 1100px) { .dq-board { grid-template-columns: 1fr; } }
+
 @media (max-width: 860px) {
   .sd-top, .sd-tabs, .sd-body, .sd > section { padding-left: 14px; padding-right: 14px; }
   .sd-tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }

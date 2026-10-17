@@ -52,6 +52,7 @@ const ShopifyOrder = mongoose.model('ShopifyOrder', new Schema({
   address: { name: String, line1: String, line2: String, city: String, state: String, zip: String, country: String, phone: String },
   items: [{ _id: false, title: String, variantTitle: String, sku: String, quantity: Number, orderedQuantity: Number, price: Number }],
   itemsSummary: String,
+  tracking: [{ _id: false, number: String, company: String, url: String }], // AWB(s) Shopify holds for the order (fulfillment tracking info)
   marketing: {
     utmSource: String, utmMedium: String, utmCampaign: String, utmTerm: String, utmContent: String, sourceGroup: String,
     landingPath: String, landingProduct: String, checkoutPayment: String, additionalCharge: Number,
@@ -183,11 +184,20 @@ const deskOrderSchema = new Schema({
   partial: { amount: Number, balance: Number, notes: String, screenshotId: String, at: Date, byName: String, fromFu: String },
   cancel: { reason: String, note: String, at: Date, byName: String, auto: Boolean, fromStage: String },
   dispatch: { at: Date, byName: String, awb: String, courier: String, note: String },
+  // Dispatch queue progress while stage === 'dispatch' (see lib/dispatch.js). Missing = still at the packing slip step.
+  dq: {
+    step: String, // slip | packed | handover | done
+    stepAt: Date, // when the current step began: its deadline is counted from here
+    slip: { at: Date, byName: String, byId: String, dueAt: Date, late: Boolean },
+    packed: { at: Date, byName: String, byId: String, awb: String, courier: String, photoId: String, dueAt: Date, late: Boolean },
+    handover: { at: Date, byName: String, byId: String, manifestId: String, dueAt: Date, late: Boolean },
+  },
   restoredAt: Date,
   rev: { type: Number, default: 0 }, // bumps on every change: two people cannot both act on the same card
   log: [{ _id: false, at: Date, by: String, byId: String, action: String, stage: String, fu: String, label: String, whatsappShared: Boolean, reason: String, amount: Number }],
 }, { timestamps: true, minimize: false });
 deskOrderSchema.index({ stage: 1, fuNo: 1, dueAt: 1 });
+deskOrderSchema.index({ 'dq.packed.awb': 1 }, { sparse: true }); // "is this AWB already on another order?"
 const DeskOrder = mongoose.model('DeskOrder', deskOrderSchema);
 
 // Payment screenshots (partial payments). Kept in MongoDB so they survive redeploys on hosts with a temporary disk.
@@ -197,4 +207,13 @@ const DeskShot = mongoose.model('DeskShot', new Schema({
   byName: String, at: { type: Date, default: Date.now },
 }, { versionKey: false }));
 
-module.exports = { DeskOrder, DeskShot, StaffUser, OrderFlow, FlowEvent, FlowProof, Snapshot, ShopifyDate, ShopifyOrder, ShipwayShipment, Order, SyncRun, Setting };
+// Dispatch queue proofs: photo of the packed package (one order) and photo of the manifest (one photo can cover many orders).
+const DispatchProof = mongoose.model('DispatchProof', new Schema({
+  kind: { type: String, enum: ['package', 'manifest'], index: true },
+  orderId: { type: Number, index: true }, // package photos
+  orderIds: [Number], // manifest photos: every order handed over with this manifest
+  mime: String, size: Number, sha256: String, data: Buffer,
+  byName: String, at: { type: Date, default: Date.now },
+}, { versionKey: false }));
+
+module.exports = { DeskOrder, DeskShot, DispatchProof, StaffUser, OrderFlow, FlowEvent, FlowProof, Snapshot, ShopifyDate, ShopifyOrder, ShipwayShipment, Order, SyncRun, Setting };
