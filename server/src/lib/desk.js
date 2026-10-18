@@ -2,6 +2,7 @@
 // An order moves: confirm (FU1 -> FU2 -> FU3) -> pending (Day 1 -> Day 2 -> Day 3) -> auto-cancelled, or at any point
 // to dispatch (confirmed / partial paid) or cancelled. The service (services/deskService.js) applies what this returns.
 const { parseYmd } = require('./istTime');
+const L = require('./labels');
 
 const HOUR = 3600 * 1000;
 const DAY = 24 * HOUR;
@@ -20,14 +21,28 @@ const httpErr = (status, message, extra = {}) => Object.assign(new Error(message
 
 // ------------------------------------------------------------------------------------------------ settings
 // confirmHours: FU1 is due this many hours after the order was placed; FU2 this many hours after FU1 was answered "DNP"; FU3 after FU2's DNP.
-// pendingDays:  after FU3 is DNP the order moves to Pending; Day 1/2/3 follow-ups are due this many days after it moved there.
+// pendingHours: the same idea for Pending orders, also in hours: Day 1 is due this many hours after the order moved to Pending (after the FU3 DNP),
+//   Day 2 this many hours after Day 1 was answered "DNP", Day 3 after Day 2's DNP. (48, 24, 24 is fine: they are gaps, not a running total.)
+// labels: only the names an admin changed (see lib/labels.js).
 const DEFAULT_CONFIG = {
-  startFrom: null, confirmHours: [0, 2, 4], pendingDays: [1, 2, 3],
-  cancelReasons: DEFAULT_CANCEL_REASONS, requireScreenshot: true, whatsappTemplate: DEFAULT_TEMPLATE,
+  startFrom: null, confirmHours: [0, 2, 4], pendingHours: [24, 24, 24],
+  cancelReasons: DEFAULT_CANCEL_REASONS, requireScreenshot: true, whatsappTemplate: DEFAULT_TEMPLATE, labels: {},
 };
 
+// Settings saved before pending follow-ups moved to hours kept a running total in days (1 / 2 / 3 = Day 1, Day 2, Day 3 after it moved to Pending).
+// Turn that into the same timing as hour gaps (24 / 24 / 24) so nothing changes for orders already in the queue.
+function migrateConfig(cur = {}) {
+  const out = { ...cur };
+  if (!Array.isArray(out.pendingHours) && Array.isArray(out.pendingDays) && out.pendingDays.length === MAX_FU) {
+    const d = out.pendingDays.map(Number);
+    out.pendingHours = [d[0] * 24, (d[1] - d[0]) * 24, (d[2] - d[1]) * 24].map((n) => Math.max(0, Math.round(n * 100) / 100));
+  }
+  delete out.pendingDays;
+  return out;
+}
+
 function normaliseConfig(body = {}, current = DEFAULT_CONFIG) {
-  const next = { ...DEFAULT_CONFIG, ...current };
+  const next = { ...DEFAULT_CONFIG, ...migrateConfig(current) };
   const nums = (v, label, { min, max, ascending = false }) => {
     if (!Array.isArray(v) || v.length !== MAX_FU) throw httpErr(400, `${label}: enter three numbers`);
     const out = v.map(Number);
@@ -36,7 +51,8 @@ function normaliseConfig(body = {}, current = DEFAULT_CONFIG) {
     return out.map((n) => Math.round(n * 100) / 100);
   };
   if (body.confirmHours !== undefined) next.confirmHours = nums(body.confirmHours, 'Confirm follow-up hours', { min: 0, max: 720 });
-  if (body.pendingDays !== undefined) next.pendingDays = nums(body.pendingDays, 'Pending follow-up days', { min: 0.04, max: 60, ascending: true });
+  if (body.pendingHours !== undefined) next.pendingHours = nums(body.pendingHours, 'Pending follow-up hours', { min: 0, max: 720 });
+  if (body.labels !== undefined) next.labels = L.normaliseLabels(body.labels, next.labels, (m) => { throw httpErr(400, m); });
   if (body.cancelReasons !== undefined) {
     const list = [...new Set((Array.isArray(body.cancelReasons) ? body.cancelReasons : []).map((s) => String(s).trim()).filter(Boolean))];
     if (!list.length || list.length > 30) throw httpErr(400, 'Keep between 1 and 30 cancellation reasons');
@@ -83,19 +99,22 @@ function collectAmount(total, financialStatus, partial) {
 
 // ------------------------------------------------------------------------------------------------ labels
 const hasPartial = (d) => !!(d && d.partial && d.partial.amount > 0); // Mongoose returns {} for an unset nested object: test the amount, not the object
+// fuLabel is the fixed name ('FU1', 'Day 2') that the history and the Overview key on. Whatever an admin renames it to is applied only when showing it (fuName).
 const fuLabel = (d) => (d.stage === 'confirm' ? `FU${d.fuNo}` : d.stage === 'pending' ? `Day ${d.fuNo}` : '');
 const STAGE_LABEL = { confirm: 'Confirm queue', pending: 'Pending', dispatch: 'Dispatch queue', dispatched: 'Dispatched', cancelled: 'Cancelled' };
-function statusLabel(d) {
-  if (!d) return 'Not in queue';
-  if (d.stage === 'confirm') return `Confirm · FU${d.fuNo}`;
-  if (d.stage === 'pending') return `Pending · Day ${d.fuNo}`;
-  if (d.stage === 'dispatch') return hasPartial(d) ? 'Partial paid · to dispatch' : 'Confirmed · to dispatch';
-  if (d.stage === 'dispatched') return hasPartial(d) ? 'Partial paid · dispatched' : 'Dispatched';
-  return 'Cancelled';
+function statusLabel(d, labels) {
+  const n = (k) => L.labelOf(labels, k);
+  if (!d || d.stage === 'none') return n('stageNone');
+  if (d.stage === 'confirm') return `${n('stageConfirm')} · ${L.fuName(labels, `FU${d.fuNo}`)}`;
+  if (d.stage === 'pending') return `${n('stagePending')} · ${L.fuName(labels, `Day ${d.fuNo}`)}`;
+  if (d.stage === 'dispatch') return hasPartial(d) ? `${n('payPartial')} · ${n('stageDispatch').toLowerCase()}` : `${n('actConfirm')} · ${n('stageDispatch').toLowerCase()}`;
+  if (d.stage === 'dispatched') return hasPartial(d) ? `${n('payPartial')} · ${n('stageDispatched').toLowerCase()}` : n('stageDispatched');
+  return n('stageCancelled');
 }
 
 // ------------------------------------------------------------------------------------------------ first state of a new order
 function initialState(order, config, now = new Date()) {
+  const fu1 = L.fuName(config.labels, 'FU1');
   const orderAt = order.createdAt ? new Date(order.createdAt) : now;
   if (order.cancelledAt) {
     return {
@@ -106,7 +125,7 @@ function initialState(order, config, now = new Date()) {
   }
   return {
     orderId: order.orderId, orderAt, stage: 'confirm', fuNo: 1, dueAt: new Date(orderAt.getTime() + config.confirmHours[0] * HOUR),
-    log: [{ at: now, by: 'System', action: 'enter_queue', stage: 'confirm', fu: 'FU1', label: 'Order entered the confirm queue (FU1)' }],
+    log: [{ at: now, by: 'System', action: 'enter_queue', stage: 'confirm', fu: 'FU1', label: `Order entered the confirm queue (${fu1})` }],
   };
 }
 
@@ -117,7 +136,8 @@ const isActive = (d) => d.stage === 'confirm' || d.stage === 'pending';
 // doc: the current desk record. order: { total, orderId }. input: what the form sent. who: { id, name }.
 function transition(doc, action, input = {}, config = DEFAULT_CONFIG, who = { id: 'system', name: 'System' }, order = {}, now = new Date()) {
   if (!ACTIONS.includes(action)) throw httpErr(400, 'Unknown action');
-  const fu = fuLabel(doc);
+  const fu = fuLabel(doc); // fixed name, stored in the history
+  const shown = L.fuName(config.labels, fu); // what the team currently calls it, used in the plain-language lines
   const base = { at: now, by: who.name, byId: who.id, stage: doc.stage, fu };
   const wrong = () => httpErr(409, `Order #${doc.orderId} is already ${STAGE_LABEL[doc.stage].toLowerCase()}. Refresh to see its latest status.`);
 
@@ -126,31 +146,32 @@ function transition(doc, action, input = {}, config = DEFAULT_CONFIG, who = { id
     const shared = input.whatsappShared;
     if (shared !== true && shared !== false && shared !== 'yes' && shared !== 'no') throw httpErr(400, 'Say whether the WhatsApp message was shared: Yes or No');
     const wa = shared === true || shared === 'yes';
-    if (doc.dueAt && now.getTime() + DUE_GRACE_MS < new Date(doc.dueAt).getTime()) throw httpErr(409, `${fu} is not due yet. It opens at ${new Date(doc.dueAt).toLocaleString('en-IN', { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit', hour12: true, timeZone: 'Asia/Kolkata' })}.`);
-    const entry = { ...base, action: 'dnp', whatsappShared: wa, label: `${fu}: did not pick up · WhatsApp ${wa ? 'shared' : 'not shared'}` };
+    if (doc.dueAt && now.getTime() + DUE_GRACE_MS < new Date(doc.dueAt).getTime()) throw httpErr(409, `${shown} is not due yet. It opens at ${new Date(doc.dueAt).toLocaleString('en-IN', { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit', hour12: true, timeZone: 'Asia/Kolkata' })}.`);
+    const entry = { ...base, action: 'dnp', whatsappShared: wa, label: `${shown}: did not pick up · WhatsApp ${wa ? 'shared' : 'not shared'}` };
     const bumped = { lastDnpAt: now, dnpCount: (doc.dnpCount || 0) + 1 };
     if (doc.stage === 'confirm' && doc.fuNo < MAX_FU) {
       const dueAt = new Date(now.getTime() + config.confirmHours[doc.fuNo] * HOUR); // FU2 uses confirmHours[1], FU3 uses [2]
       return { set: { ...bumped, fuNo: doc.fuNo + 1, dueAt }, entries: [entry] };
     }
     if (doc.stage === 'confirm') { // third DNP: out of the confirm queue
-      const dueAt = new Date(now.getTime() + config.pendingDays[0] * DAY);
-      return { set: { ...bumped, stage: 'pending', fuNo: 1, pendingSince: now, dueAt }, entries: [entry, { at: new Date(now.getTime() + 1), by: 'System', stage: 'pending', fu: 'Day 1', action: 'to_pending', label: 'No answer on FU1, FU2 and FU3: moved to Pending orders' }] };
+      const dueAt = new Date(now.getTime() + config.pendingHours[0] * HOUR);
+      const names = [1, 2, 3].map((n) => L.fuName(config.labels, `FU${n}`));
+      return { set: { ...bumped, stage: 'pending', fuNo: 1, pendingSince: now, dueAt }, entries: [entry, { at: new Date(now.getTime() + 1), by: 'System', stage: 'pending', fu: 'Day 1', action: 'to_pending', label: `No answer on ${names[0]}, ${names[1]} and ${names[2]}: moved to ${L.labelOf(config.labels, 'tabPending')}` }] };
     }
     if (doc.fuNo < MAX_FU) {
-      const dueAt = new Date(new Date(doc.pendingSince || now).getTime() + config.pendingDays[doc.fuNo] * DAY);
+      const dueAt = new Date(now.getTime() + config.pendingHours[doc.fuNo] * HOUR); // Day 2 uses pendingHours[1], Day 3 uses [2]: hours after the previous no-answer
       return { set: { ...bumped, fuNo: doc.fuNo + 1, dueAt }, entries: [entry] };
     }
-    const reason = 'No response after 6 follow-ups (DNP)'; // pending Day 3 was also DNP: auto-cancel
+    const reason = 'No response after 6 follow-ups (DNP)'; // the last pending follow-up was also DNP: auto-cancel
     return {
-      set: { ...bumped, stage: 'cancelled', dueAt: null, cancel: { reason, note: 'Auto-cancelled by the system after the Day 3 follow-up got no answer', at: now, byName: 'System', auto: true, fromStage: 'pending' } },
+      set: { ...bumped, stage: 'cancelled', dueAt: null, cancel: { reason, note: `Auto-cancelled by the system after the ${L.fuName(config.labels, 'Day 3')} follow-up got no answer`, at: now, byName: 'System', auto: true, fromStage: 'pending' } },
       entries: [entry, { at: new Date(now.getTime() + 1), by: 'System', stage: 'cancelled', fu: '', action: 'auto_cancel', label: `Auto-cancelled: ${reason}` }],
     };
   }
 
   if (action === 'confirm') {
     if (!isActive(doc)) throw wrong();
-    return { set: { stage: 'dispatch', fuNo: 0, dueAt: null, confirmedAt: now, confirmedAtFu: fu, confirmedBy: who.name }, entries: [{ ...base, action: 'confirm', label: `Confirmed on ${fu}` }] };
+    return { set: { stage: 'dispatch', fuNo: 0, dueAt: null, confirmedAt: now, confirmedAtFu: fu, confirmedBy: who.name }, entries: [{ ...base, action: 'confirm', label: `Confirmed on ${shown}` }] };
   }
 
   if (action === 'partial_paid') {
@@ -163,7 +184,7 @@ function transition(doc, action, input = {}, config = DEFAULT_CONFIG, who = { id
     const partial = { amount: rupees(amount), balance: order.total != null ? rupees(order.total - amount) : null, notes, screenshotId: input.screenshotId || null, at: now, byName: who.name, fromFu: fu };
     return {
       set: { stage: 'dispatch', fuNo: 0, dueAt: null, confirmedAt: now, confirmedAtFu: fu, confirmedBy: who.name, partial },
-      entries: [{ ...base, action: 'partial_paid', amount: partial.amount, label: `Partial paid on ${fu}: ₹${partial.amount} received${partial.balance != null ? `, ₹${partial.balance} to collect` : ''}${notes ? ` · ${notes}` : ''}` }],
+      entries: [{ ...base, action: 'partial_paid', amount: partial.amount, label: `Partial paid on ${shown}: ₹${partial.amount} received${partial.balance != null ? `, ₹${partial.balance} to collect` : ''}${notes ? ` · ${notes}` : ''}` }],
     };
   }
 
@@ -194,7 +215,7 @@ function transition(doc, action, input = {}, config = DEFAULT_CONFIG, who = { id
   if (doc.stage !== 'cancelled') throw wrong();
   return {
     set: { stage: 'confirm', fuNo: 1, dueAt: now, cancel: null, partial: null, pendingSince: null, restoredAt: now },
-    entries: [{ ...base, action: 'restore', stage: 'cancelled', label: 'Restored to the confirm queue (FU1)' }],
+    entries: [{ ...base, action: 'restore', stage: 'cancelled', label: `Restored to the confirm queue (${L.fuName(config.labels, 'FU1')})` }],
   };
 }
 
@@ -255,5 +276,6 @@ function overviewStats(rows, now = new Date()) {
 module.exports = {
   HOUR, DAY, STAGES, ACTIONS, MAX_FU, DEFAULT_CONFIG, DEFAULT_CANCEL_REASONS, DEFAULT_TEMPLATE, STAGE_LABEL,
   httpErr, normaliseConfig, tenDigits, dialNumber, renderTemplate, waLink, firstName, rupees, collectAmount,
-  fuLabel, hasPartial, statusLabel, initialState, transition, isActive, overviewStats,
+  fuLabel, hasPartial, statusLabel, initialState, transition, isActive, overviewStats, migrateConfig,
+  DEFAULT_LABELS: L.DEFAULT_LABELS, LABEL_GROUPS: L.GROUPS, labelOf: L.labelOf, fuName: L.fuName,
 };

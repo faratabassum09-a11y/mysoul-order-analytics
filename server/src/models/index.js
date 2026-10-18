@@ -189,14 +189,17 @@ const deskOrderSchema = new Schema({
     step: String, // slip | packed | handover | done
     stepAt: Date, // when the current step began: its deadline is counted from here
     slip: { at: Date, byName: String, byId: String, dueAt: Date, late: Boolean },
-    packed: { at: Date, byName: String, byId: String, awb: String, courier: String, photoId: String, dueAt: Date, late: Boolean },
-    handover: { at: Date, byName: String, byId: String, manifestId: String, dueAt: Date, late: Boolean },
+    packed: { at: Date, byName: String, byId: String, awb: String, courier: String, photoId: String, photoIds: [String], dueAt: Date, late: Boolean }, // photoIds: every photo of the package (photoId = the first)
+    handover: { at: Date, byName: String, byId: String, manifestId: String, manifestIds: [String], dueAt: Date, late: Boolean }, // manifestIds: every photo of the manifest
   },
+  // Who has to work this order right now (see lib/assign.js). slot is the column it was given for: when the order moves to the next column it is shared out again.
+  assignee: { id: String, name: String, slot: String, at: Date, by: String, auto: Boolean },
   restoredAt: Date,
   rev: { type: Number, default: 0 }, // bumps on every change: two people cannot both act on the same card
   log: [{ _id: false, at: Date, by: String, byId: String, action: String, stage: String, fu: String, label: String, whatsappShared: Boolean, reason: String, amount: Number }],
 }, { timestamps: true, minimize: false });
 deskOrderSchema.index({ stage: 1, fuNo: 1, dueAt: 1 });
+deskOrderSchema.index({ 'assignee.id': 1, stage: 1 });
 deskOrderSchema.index({ 'dq.packed.awb': 1 }, { sparse: true }); // "is this AWB already on another order?"
 const DeskOrder = mongoose.model('DeskOrder', deskOrderSchema);
 

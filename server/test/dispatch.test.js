@@ -126,3 +126,27 @@ test('stepCounts: how many orders sit in each step, and how many are past their 
 test('timeLabel shows a 12-hour clock', () => {
   assert.equal(P.timeLabel('12:00'), '12:00 PM'); assert.equal(P.timeLabel('18:00'), '6:00 PM'); assert.equal(P.timeLabel('00:30'), '12:30 AM'); assert.equal(P.timeLabel('09:05'), '9:05 AM');
 });
+
+// ------------------------------------------------------------ several photos, AWB from Shipway
+test('several package photos are kept, the first is also kept as photoId, and one is enough', () => {
+  let d = doc(); d = apply(d, P.slipDone(d, conf, who));
+  const t = P.packedDone(d, { awb: 'ABC12345', courier: 'Delhivery', photoIds: ['p1', 'p2', 'p2', 'p3'] }, conf, who);
+  assert.deepEqual(t.set.dq.packed.photoIds, ['p1', 'p2', 'p3']); assert.equal(t.set.dq.packed.photoId, 'p1');
+  assert.throws(() => P.packedDone(d, { awb: 'ABC12345', photoIds: [] }, conf, who), /at least one photo/);
+  assert.throws(() => P.packedDone(d, { awb: 'ABC12345', photoIds: Array.from({ length: 11 }, (_, i) => `p${i}`) }, conf, who), /at most 10/);
+  const off = P.normaliseDispatchConfig({ stages: { packed: { requirePhoto: false } } }, conf);
+  assert.deepEqual(P.packedDone(d, { awb: 'ABC12345', photoIds: [] }, off, who).set.dq.packed.photoIds, []);
+});
+
+test('several manifest photos are kept for every order handed over', () => {
+  let d = doc(); d = apply(d, P.slipDone(d, conf, who)); d = apply(d, P.packedDone(d, { awb: 'ABC12345', photoId: 'p' }, conf, who));
+  const t = P.handoverDone(d, { manifestIds: ['m1', 'm2'] }, conf, who);
+  assert.deepEqual(t.set.dq.handover.manifestIds, ['m1', 'm2']); assert.equal(t.set.dq.handover.manifestId, 'm1');
+  assert.throws(() => P.handoverDone(d, { manifestIds: [] }, conf, who), /at least one photo/);
+});
+
+test('typing the AWB by hand is allowed by default and can be switched off', () => {
+  assert.equal(conf.allowManualAwb, true);
+  assert.equal(P.normaliseDispatchConfig({ allowManualAwb: false }, conf).allowManualAwb, false);
+  assert.equal(P.normaliseDispatchConfig({ holidays: [] }, P.normaliseDispatchConfig({ allowManualAwb: false }, conf)).allowManualAwb, false); // later saves keep it
+});

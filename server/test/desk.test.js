@@ -5,7 +5,7 @@ const D = require('../src/lib/desk');
 const { verifyShopifyHmac } = require('../src/lib/shopifyHmac');
 
 const H = D.HOUR; const DAY = D.DAY;
-const conf = D.normaliseConfig({}, { ...D.DEFAULT_CONFIG, startFrom: '2026-10-01' }); // FU hours 0/2/4, pending days 1/2/3
+const conf = D.normaliseConfig({}, { ...D.DEFAULT_CONFIG, startFrom: '2026-10-01' }); // FU hours 0/2/4, pending hours 24/24/24
 const who = { id: 'u1', name: 'Asha' };
 const t0 = new Date('2026-10-16T06:00:00Z');
 const order = { orderId: 1500, createdAt: t0 };
@@ -57,17 +57,48 @@ test('DNP before the follow-up is due is refused', () => {
   assert.throws(() => D.transition(d, 'dnp', { whatsappShared: 'yes' }, conf, who, {}, new Date(t0.getTime() + H)), /not due yet/);
 });
 
-test('Pending: Day 1, 2, 3 are measured from the day it moved to Pending; Day 3 DNP auto-cancels', () => {
-  let d = { ...D.initialState(order, conf, t0), stage: 'pending', fuNo: 1, pendingSince: t0, dueAt: new Date(t0.getTime() + DAY), dnpCount: 3 };
-  const day1 = new Date(t0.getTime() + DAY + 5 * H); // answered late
-  d = step(d, 'dnp', { whatsappShared: 'yes' }, day1);
-  assert.equal(d.fuNo, 2); assert.equal(d.dueAt.getTime(), t0.getTime() + 2 * DAY); // not day1 + 1 day
-  d = step(d, 'dnp', { whatsappShared: 'yes' }, new Date(t0.getTime() + 2 * DAY));
-  assert.equal(d.fuNo, 3); assert.equal(d.dueAt.getTime(), t0.getTime() + 3 * DAY);
-  d = step(d, 'dnp', { whatsappShared: 'no' }, new Date(t0.getTime() + 3 * DAY));
+test('Pending follow-ups are in hours and, like the confirm queue, each one is counted from the previous no-answer; the last DNP auto-cancels', () => {
+  const c = D.normaliseConfig({ pendingHours: [48, 24, 12] }, conf); // gaps, not a running total
+  const go = (doc, now) => apply(doc, D.transition(doc, 'dnp', { whatsappShared: 'yes' }, c, who, {}, now));
+  let d = { ...D.initialState(order, c, t0), stage: 'confirm', fuNo: 3, dueAt: t0, dnpCount: 2 };
+  d = go(d, t0); // FU3 DNP -> Pending, Day 1 due 48 h later
+  assert.equal(d.stage, 'pending'); assert.equal(d.fuNo, 1); assert.equal(d.dueAt.getTime(), t0.getTime() + 48 * H);
+  const day1 = new Date(t0.getTime() + 53 * H); // answered 5 h late: the next gap starts from the answer
+  d = go(d, day1);
+  assert.equal(d.fuNo, 2); assert.equal(d.dueAt.getTime(), day1.getTime() + 24 * H);
+  const day2 = new Date(day1.getTime() + 24 * H);
+  d = go(d, day2);
+  assert.equal(d.fuNo, 3); assert.equal(d.dueAt.getTime(), day2.getTime() + 12 * H);
+  d = go(d, new Date(day2.getTime() + 12 * H));
   assert.equal(d.stage, 'cancelled'); assert.equal(d.cancel.auto, true); assert.equal(d.dnpCount, 6);
   assert.match(d.cancel.reason, /6 follow-ups/);
   assert.equal(d.log.at(-1).action, 'auto_cancel');
+});
+
+test('settings saved with the old day numbers keep their timing when read as hours', () => {
+  assert.deepEqual(D.normaliseConfig({}, { startFrom: '2026-10-01', pendingDays: [1, 2, 3] }).pendingHours, [24, 24, 24]);
+  assert.deepEqual(D.normaliseConfig({}, { startFrom: '2026-10-01', pendingDays: [2, 3, 7] }).pendingHours, [48, 24, 96]);
+  assert.equal(D.normaliseConfig({}, { startFrom: '2026-10-01', pendingDays: [1, 2, 3] }).pendingDays, undefined);
+  assert.deepEqual(D.DEFAULT_CONFIG.pendingHours, [24, 24, 24]);
+});
+
+test('renamed follow-ups show in the plain-language history, while the stored name stays fixed for the Overview', () => {
+  const c = D.normaliseConfig({ labels: { fu1: 'Call 1', fu2: 'Call 2', day1: 'Pending 1' } }, conf);
+  let d = D.initialState(order, c, t0);
+  assert.match(d.log[0].label, /Call 1/);
+  d = apply(d, D.transition(d, 'dnp', { whatsappShared: 'yes' }, c, who, {}, t0));
+  assert.match(d.log.at(-1).label, /^Call 1: did not pick up/); assert.equal(d.log.at(-1).fu, 'FU1');
+  assert.equal(D.statusLabel(d, c.labels), 'Confirm queue · Call 2');
+  assert.equal(D.statusLabel(d), 'Confirm queue · FU2'); // no names given: the defaults
+});
+
+test('names can be changed, reset by leaving them empty, and only known names are accepted', () => {
+  const c = D.normaliseConfig({ labels: { tabConfirm: '  Calls  ', btnDone: 'Next' } }, conf);
+  assert.deepEqual(c.labels, { tabConfirm: 'Calls', btnDone: 'Next' });
+  assert.deepEqual(D.normaliseConfig({ labels: { tabConfirm: '', btnDone: 'DONE' } }, c).labels, {}); // empty or equal to the default = back to default
+  assert.throws(() => D.normaliseConfig({ labels: { tabNope: 'x' } }, conf), /Unknown name/);
+  assert.throws(() => D.normaliseConfig({ labels: { fu1: 'x'.repeat(200) } }, conf), /under 90/);
+  assert.equal(D.labelOf({ fu1: 'Call 1' }, 'fu1'), 'Call 1'); assert.equal(D.labelOf({}, 'fu1'), 'FU1');
 });
 
 test('Confirmed moves to the dispatch queue and remembers which follow-up got it', () => {
@@ -119,7 +150,9 @@ test('restore puts a cancelled order back at FU1', () => {
 test('settings are validated', () => {
   assert.throws(() => D.normaliseConfig({ confirmHours: [0, 2] }, conf), /three numbers/);
   assert.throws(() => D.normaliseConfig({ confirmHours: [0, -1, 4] }, conf), /0 to 720/);
-  assert.throws(() => D.normaliseConfig({ pendingDays: [3, 2, 1] }, conf), /later day/);
+  assert.throws(() => D.normaliseConfig({ pendingHours: [48, 24] }, conf), /three numbers/);
+  assert.throws(() => D.normaliseConfig({ pendingHours: [48, -1, 24] }, conf), /0 to 720/);
+  assert.deepEqual(D.normaliseConfig({ pendingHours: [48, 24, 24] }, conf).pendingHours, [48, 24, 24]); // not ascending: these are gaps
   assert.throws(() => D.normaliseConfig({ cancelReasons: [] }, conf), /between 1 and 30/);
   assert.throws(() => D.normaliseConfig({ startFrom: 'yesterday' }, conf), /2026-10-16/);
   assert.deepEqual(D.normaliseConfig({ cancelReasons: ['A ', 'A', ' B'] }, conf).cancelReasons, ['A', 'B']);
@@ -169,4 +202,9 @@ test('Shopify webhook signature', () => {
   assert.equal(verifyShopifyHmac(body, '', secret), false);
   assert.equal(verifyShopifyHmac(undefined, good, secret), false);
   assert.equal(verifyShopifyHmac(body, good, ''), false);
+});
+
+test('the client keeps a copy of the default names for the moment before settings load; it must match the server list', () => {
+  const copy = require('../../client/src/labelDefaults.json');
+  assert.deepEqual(copy, D.DEFAULT_LABELS);
 });

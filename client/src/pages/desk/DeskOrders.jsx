@@ -4,13 +4,15 @@ import { FilterBar, Loading } from '../../components.jsx';
 import { useAutoRefresh } from '../../flowUi.js';
 import { useFilters } from '../../filters.jsx';
 import { inr, int } from '../../format.js';
-import { fmtPhone, Empty, OrderDrawer, PayTag, StageTag, useDebounced } from './shared.jsx';
+import { fmtPhone, Empty, OrderDrawer, PayTag, StageTag, useDebounced, useLabels } from './shared.jsx';
 
-const FILTERS = [['', 'All'], ['confirm', 'Confirm queue'], ['pending', 'Pending'], ['dispatch', 'To dispatch'], ['dispatched', 'Dispatched'], ['partial', 'Partial paid'], ['cancelled', 'Cancelled'], ['none', 'Not in queue']];
+const FILTER_KEYS = [['', null], ['confirm', 'stageConfirm'], ['pending', 'stagePending'], ['dispatch', 'stageDispatch'], ['dispatched', 'stageDispatched'], ['partial', 'payPartial'], ['cancelled', 'stageCancelled'], ['none', 'stageNone']];
 const fmtDT = (s) => (s ? new Date(s).toLocaleString('en-IN', { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit', hour12: true, timeZone: 'Asia/Kolkata' }) : '—');
 
 // Every order Shopify has, with the desk status next to it. Click one to see everything about it.
 export default function DeskOrders() {
+  const { L } = useLabels();
+  const FILTERS = FILTER_KEYS.map(([k, name]) => [k, name ? L(name) : 'All']);
   const f = useFilters();
   const [stage, setStage] = useState('');
   const [q, setQ] = useState(''); const qd = useDebounced(q);

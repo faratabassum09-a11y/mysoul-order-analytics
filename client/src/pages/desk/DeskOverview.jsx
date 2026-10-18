@@ -5,6 +5,7 @@ import { DeltaChip, FilterBar, Loading } from '../../components.jsx';
 import { useAutoRefresh } from '../../flowUi.js';
 import { useFilters } from '../../filters.jsx';
 import { inr, int, pct } from '../../format.js';
+import { useLabels } from './shared.jsx';
 
 const STAGES = [['confirm', 'In confirm queue', '#2a7f8e'], ['pending', 'In pending', '#6a55b3'], ['dispatch', 'To dispatch', '#1c7c6c'], ['dispatched', 'Dispatched', '#3b4a96'], ['cancelled', 'Cancelled', '#b3261e'], ['none', 'Not in queue', '#a9b0ba']];
 const hrs = (h) => (h == null ? '—' : h < 1 ? `${Math.round(h * 60)} min` : h < 48 ? `${h.toFixed(1)} h` : `${(h / 24).toFixed(1)} d`);
@@ -14,6 +15,7 @@ function Kpi({ label, value, sub, chip, tone }) {
 }
 
 export default function DeskOverview() {
+  const { fu } = useLabels();
   const f = useFilters();
   const { data, error, loading, reload } = useApi('/desk/overview', f.params, f.ready);
   useAutoRefresh(reload, 60);
@@ -69,7 +71,7 @@ export default function DeskOverview() {
                 <thead><tr><th>Follow-up</th><th className="num">Confirmed</th><th className="num">Partial paid</th><th className="num">Cancelled</th><th className="num">Did not pick up</th><th className="num">WhatsApp shared</th></tr></thead>
                 <tbody>{s.byFu.map((r) => {
                   const dn = r.whatsappYes + r.whatsappNo;
-                  return <tr key={r.fu}><td><b>{r.fu}</b></td><td className="num">{int(r.confirmed)}</td><td className="num">{int(r.partial)}</td><td className="num">{int(r.cancelled)}</td><td className="num">{int(r.dnp)}</td><td className="num">{dn ? `${int(r.whatsappYes)} of ${int(dn)} (${Math.round((r.whatsappYes / dn) * 100)}%)` : '—'}</td></tr>;
+                  return <tr key={r.fu}><td><b>{fu(r.fu)}</b></td><td className="num">{int(r.confirmed)}</td><td className="num">{int(r.partial)}</td><td className="num">{int(r.cancelled)}</td><td className="num">{int(r.dnp)}</td><td className="num">{dn ? `${int(r.whatsappYes)} of ${int(dn)} (${Math.round((r.whatsappYes / dn) * 100)}%)` : '—'}</td></tr>;
                 })}</tbody>
               </table></div>
 
