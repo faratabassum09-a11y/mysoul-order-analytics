@@ -1,14 +1,15 @@
 import React, { useEffect, useState } from 'react';
 import { api, useApi } from '../../api.js';
 import { useToast } from '../../deskUi.jsx';
-import { DEFAULT_TEMPLATE_PREVIEW, notifyDesk } from './shared.jsx';
+import { DEFAULT_TEMPLATE_PREVIEW, notifyDesk, useLabels } from './shared.jsx';
+import AssignSettings from './AssignSettings.jsx';
 
 const DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']; // 0 = Monday, as the server numbers them
 const hm = (t) => { const [h, m] = String(t || '12:00').split(':').map(Number); return `${((h + 11) % 12) + 1}:${String(m || 0).padStart(2, '0')} ${h < 12 ? 'AM' : 'PM'}`; };
 const DQ_STAGES = [
-  ['slip', 'Packing slip', 'An order enters this step the moment it is confirmed. Press DONE after the slip is printed and stuck on the box.', false],
-  ['packed', 'Order packed', 'Counted from when the packing slip was marked done. DONE opens the form: AWB (filled from Shopify) and a photo of the package.', true],
-  ['handover', 'Order handover', 'Counted from when the order was packed. DONE opens the form with the photo of the manifest; the order then moves to In-transit orders.', true],
+  ['slip', 'stepSlip', 'An order enters this step the moment it is confirmed. Press DONE after the slip is printed and stuck on the box.', false],
+  ['packed', 'stepPacked', 'Counted from when the packing slip was marked done. DONE opens the form: the AWB and courier are filled from Shipway, and the person adds photos of the package.', true],
+  ['handover', 'stepHandover', 'Counted from when the order was packed. DONE opens the form with the photos of the manifest; the order then moves to In-transit orders.', true],
 ];
 
 const NumRow = ({ label, hint, value, onChange, unit, step = 'any' }) => (
@@ -18,7 +19,30 @@ const NumRow = ({ label, hint, value, onChange, unit, step = 'any' }) => (
   </label>
 );
 
+// One input per renameable name. Left empty (or equal to the original) it goes back to the original.
+function NamesCard({ groups, defaults, names, setName, resetAll }) {
+  return (
+    <div className="sd-set-card" id="names">
+      <h2>Names and labels</h2>
+      <p className="cap">Rename anything you see on the desk: tabs, columns, buttons, outcomes. The new name appears everywhere straight after you save. Clear a box to get the original name back. Old history lines keep the words they were written with.</p>
+      {groups.map((g) => (
+        <div key={g.title} className="names-group">
+          <h3>{g.title}</h3>
+          <div className="names-grid">
+            {g.items.map(([k, def, hint]) => (
+              <label key={k} className="names-row"><span>{hint || def}<small>{names[k] && names[k] !== def ? `Original: ${def}` : ''}</small></span>
+                <input type="text" maxLength={90} value={names[k] === undefined ? '' : names[k]} placeholder={defaults[k] || def} onChange={(e) => setName(k, e.target.value)} aria-label={`Name for ${def}`} /></label>
+            ))}
+          </div>
+        </div>
+      ))}
+      <button type="button" className="btn ghost" onClick={resetAll}>Reset every name to the original</button>
+    </div>
+  );
+}
+
 export default function DeskSettings() {
+  const { L } = useLabels();
   const { data, reload } = useApi('/desk/config');
   const shop = useApi('/shopify/status').data;
   const dqData = useApi('/desk/dispatch/config');
@@ -26,10 +50,10 @@ export default function DeskSettings() {
   const [f, setF] = useState(null);
   const [busy, setBusy] = useState(false);
   const [toast, show] = useToast();
-  useEffect(() => { if (data) setF({ confirmHours: data.confirmHours.map(String), pendingDays: data.pendingDays.map(String), reasons: data.cancelReasons.join('\n'), requireScreenshot: data.requireScreenshot, template: data.whatsappTemplate, startFrom: data.startFrom }); }, [data]);
+  useEffect(() => { if (data) setF({ names: { ...(data.labels || {}) }, confirmHours: data.confirmHours.map(String), pendingHours: data.pendingHours.map(String), reasons: data.cancelReasons.join('\n'), requireScreenshot: data.requireScreenshot, template: data.whatsappTemplate, startFrom: data.startFrom }); }, [data]);
   useEffect(() => {
     const d = dqData.data; if (!d) return;
-    setDq({ workingDays: d.workingDays, holidays: d.holidays.join('\n'), stages: Object.fromEntries(Object.entries(d.stages).map(([k, v]) => [k, { ...v, dayOffset: String(v.dayOffset) }])) });
+    setDq({ allowManualAwb: d.allowManualAwb !== false, workingDays: d.workingDays, holidays: d.holidays.join('\n'), stages: Object.fromEntries(Object.entries(d.stages).map(([k, v]) => [k, { ...v, dayOffset: String(v.dayOffset) }])) });
   }, [dqData.data]);
   useEffect(() => { if (dq && window.location.hash === '#dispatch') document.getElementById('dispatch')?.scrollIntoView({ block: 'start' }); }, [!!dq]); // eslint-disable-line react-hooks/exhaustive-deps
   if (!f || !dq) return <div className="empty">Loading…</div>;
@@ -40,35 +64,42 @@ export default function DeskSettings() {
   const save = async () => {
     setBusy(true);
     try {
-      await api.put('/desk/config', { confirmHours: f.confirmHours.map(Number), pendingDays: f.pendingDays.map(Number), cancelReasons: f.reasons.split('\n'), requireScreenshot: f.requireScreenshot, whatsappTemplate: f.template, startFrom: f.startFrom });
+      const labels = Object.fromEntries(Object.keys(data.labelDefaults).map((k) => [k, f.names[k] || '']));
+      await api.put('/desk/config', { labels, confirmHours: f.confirmHours.map(Number), pendingHours: f.pendingHours.map(Number), cancelReasons: f.reasons.split('\n'), requireScreenshot: f.requireScreenshot, whatsappTemplate: f.template, startFrom: f.startFrom });
       await api.put('/desk/dispatch/config', {
         workingDays: dq.workingDays, holidays: dq.holidays.split(/[\s,]+/).filter(Boolean),
+        allowManualAwb: dq.allowManualAwb,
         stages: Object.fromEntries(Object.entries(dq.stages).map(([k, v]) => [k, { dueTime: v.dueTime, dayOffset: Number(v.dayOffset), ...(k === 'slip' ? {} : { requirePhoto: !!v.requirePhoto }) }])),
       });
-      notifyDesk(); reload(); dqData.reload(); show('Settings saved. New timings apply to the next follow-up and to every order in the dispatch queue.');
+      notifyDesk(); window.dispatchEvent(new Event('desk-config-changed')); reload(); dqData.reload(); show('Settings saved. New timings apply to the next follow-up and to every order in the dispatch queue.');
     } catch (e) { show(e.message, 'err'); } finally { setBusy(false); }
   };
-  const [h1, h2, h3] = f.confirmHours.map(Number); const [d1, d2, d3] = f.pendingDays.map(Number);
+  const [h1, h2, h3] = f.confirmHours.map(Number); const [p1, p2, p3] = f.pendingHours.map(Number);
   const when = (h) => (h === 0 ? 'straight away' : `${h} h`);
+  const setName = (k, v) => setF((x) => ({ ...x, names: { ...x.names, [k]: v } }));
   const webhook = shop && shop.redirectUri ? shop.redirectUri.replace('/api/shopify/callback', '/api/webhook/shopify') : 'https://YOUR-SERVER/api/webhook/shopify';
   return (
     <div className="sd-body sd-settings">
-      <div className="sd-set-card">
-        <h2>Confirm queue follow-ups</h2>
-        <p className="cap">Every new order starts at FU1. Press DNP and it waits for the next follow-up. After FU3 it moves to Pending orders.</p>
-        <NumRow label="FU1 is due" hint="After the order is placed. 0 means the moment it arrives." value={f.confirmHours[0]} onChange={(v) => setAt('confirmHours', 0, v)} unit="hours" />
-        <NumRow label="FU2 is due" hint="After FU1 was marked DNP." value={f.confirmHours[1]} onChange={(v) => setAt('confirmHours', 1, v)} unit="hours" />
-        <NumRow label="FU3 is due" hint="After FU2 was marked DNP." value={f.confirmHours[2]} onChange={(v) => setAt('confirmHours', 2, v)} unit="hours" />
-        <p className="sd-sum">An order placed at 10:00 is called {when(h1)} after it arrives, again {when(h2)} after the first DNP, and a third time {when(h3)} after the second DNP.</p>
+      <nav className="sd-jump" aria-label="Jump to">
+        <a href="#followups">Follow-ups</a><a href="#assign">Team assignment</a><a href="#names">Names and labels</a><a href="#dispatch">Dispatch</a>
+      </nav>
+      <div className="sd-set-card" id="followups">
+        <h2>{L('tabConfirm')} follow-ups</h2>
+        <p className="cap">Every new order starts at {L('fu1')}. Press {L('actDnp')} and it waits for the next follow-up. After {L('fu3')} it moves to {L('tabPending')}. All times are in hours.</p>
+        <NumRow label={`${L('fu1')} is due`} hint="After the order is placed. 0 means the moment it arrives." value={f.confirmHours[0]} onChange={(v) => setAt('confirmHours', 0, v)} unit="hours" />
+        <NumRow label={`${L('fu2')} is due`} hint={`After ${L('fu1')} was marked ${L('actDnp')}.`} value={f.confirmHours[1]} onChange={(v) => setAt('confirmHours', 1, v)} unit="hours" />
+        <NumRow label={`${L('fu3')} is due`} hint={`After ${L('fu2')} was marked ${L('actDnp')}.`} value={f.confirmHours[2]} onChange={(v) => setAt('confirmHours', 2, v)} unit="hours" />
+        <p className="sd-sum">An order placed at 10:00 is called {when(h1)} after it arrives, again {when(h2)} after the first {L('actDnp')}, and a third time {when(h3)} after the second.</p>
       </div>
       <div className="sd-set-card">
-        <h2>Pending orders follow-ups</h2>
-        <p className="cap">Counted from the day the order moved to Pending. A DNP on Day 3 cancels the order automatically and moves it to Cancelled orders.</p>
-        <NumRow label="Day 1 follow-up" hint="Days after it moved to Pending." value={f.pendingDays[0]} onChange={(v) => setAt('pendingDays', 0, v)} unit="days" />
-        <NumRow label="Day 2 follow-up" hint="Must be later than Day 1." value={f.pendingDays[1]} onChange={(v) => setAt('pendingDays', 1, v)} unit="days" />
-        <NumRow label="Day 3 follow-up" hint="Must be later than Day 2." value={f.pendingDays[2]} onChange={(v) => setAt('pendingDays', 2, v)} unit="days" />
-        <p className="sd-sum">Auto-cancel happens {d3 || 3} days after the order moved to Pending, if the Day 1, Day 2 and Day 3 calls all went unanswered (day {d1 || 1}, {d2 || 2}, {d3 || 3}).</p>
+        <h2>{L('tabPending')} follow-ups</h2>
+        <p className="cap">Also in hours, and counted the same way as above: each follow-up is due this many hours after the one before it was marked {L('actDnp')}. For example 48, 24, 24 means the first call two days after the order moved here, then a day later, then a day later. A {L('actDnp')} on {L('day3')} cancels the order automatically and moves it to {L('tabCancelled')}.</p>
+        <NumRow label={`${L('day1')} is due`} hint={`After it moved to ${L('tabPending')} (the last ${L('fu3')} ${L('actDnp')}).`} value={f.pendingHours[0]} onChange={(v) => setAt('pendingHours', 0, v)} unit="hours" />
+        <NumRow label={`${L('day2')} is due`} hint={`After ${L('day1')} was marked ${L('actDnp')}.`} value={f.pendingHours[1]} onChange={(v) => setAt('pendingHours', 1, v)} unit="hours" />
+        <NumRow label={`${L('day3')} is due`} hint={`After ${L('day2')} was marked ${L('actDnp')}.`} value={f.pendingHours[2]} onChange={(v) => setAt('pendingHours', 2, v)} unit="hours" />
+        <p className="sd-sum">Auto-cancel happens after the last call gets no answer: about {(p1 || 0) + (p2 || 0) + (p3 || 0)} hours after the order moved to {L('tabPending')} if every call is answered on time with {L('actDnp')}.</p>
       </div>
+      <AssignSettings />
       <div className="sd-set-card">
         <h2>Cancellation reasons</h2>
         <p className="cap">One per line. These are the quick choices when someone cancels an order. “Other” always lets them type their own.</p>
@@ -99,15 +130,17 @@ export default function DeskSettings() {
         const st = dq.stages[k]; const n = Number(st.dayOffset);
         return (
           <div className="sd-set-card" key={k}>
-            <h2>Dispatch queue: {title}</h2>
+            <h2>{L('tabDispatch')}: {L(title)}</h2>
             <p className="cap">{cap}</p>
             <label className="sd-set-row"><span><b>Due by</b><small>Time of day (IST) on the due working day.</small></span><input type="time" value={st.dueTime} onChange={(e) => setStage(k, 'dueTime', e.target.value)} /></label>
             <NumRow label="Working days allowed" hint="0 = the same working day (the next one if this time has already passed). 1 = the next working day." value={st.dayOffset} onChange={(v) => setStage(k, 'dayOffset', v)} unit="days" step="1" />
-            {photo && <label className="sd-check"><input type="checkbox" checked={!!st.requirePhoto} onChange={(e) => setStage(k, 'requirePhoto', e.target.checked)} /> Require a {k === 'packed' ? 'photo of the package' : 'photo of the manifest'} before DONE</label>}
+            {photo && <label className="sd-check"><input type="checkbox" checked={!!st.requirePhoto} onChange={(e) => setStage(k, 'requirePhoto', e.target.checked)} /> Require at least one {k === 'packed' ? 'photo of the package' : 'photo of the manifest'} before {L('btnDone')}</label>}
+            {k === 'packed' && <label className="sd-check"><input type="checkbox" checked={dq.allowManualAwb} onChange={(e) => setDq((x) => ({ ...x, allowManualAwb: e.target.checked }))} /> If Shipway has no AWB for an order yet, let the person type it (otherwise they wait for Shipway)</label>}
             <p className="sd-sum">{n === 0 ? `Due by ${hm(st.dueTime)} on a working day: the same day if the step starts earlier than that, otherwise the next working day.` : `Due by ${hm(st.dueTime)}, ${n} working day${n === 1 ? '' : 's'} after the step starts.`}</p>
           </div>
         );
       })}
+      <NamesCard groups={data.labelGroups} defaults={data.labelDefaults} names={f.names} setName={setName} resetAll={() => setF((x) => ({ ...x, names: {} }))} />
       <div className="sd-set-card">
         <h2>Live from Shopify</h2>
         <p className="cap">The server pulls new and changed orders every {shop && shop.intervalMin ? shop.intervalMin : 2} minutes. For instant arrival, add webhooks in Shopify (Dev Dashboard, your app, Webhooks) for <b>orders/create</b> and <b>orders/updated</b> pointing to:</p>

@@ -65,7 +65,7 @@ export function CancelledOrders() {
   const page = shown.slice((pager.page - 1) * 50, pager.page * 50);
   const s = data && data.sums;
   const restore = async () => {
-    try { await api.post(`/desk/orders/${ask.orderId}/action`, { action: 'restore' }); notifyDesk(); show(`${ask.orderName} is back in the confirm queue at FU1.`); setAsk(null); reload(); }
+    try { await api.post(`/desk/orders/${ask.orderId}/action`, { action: 'restore' }); notifyDesk(); show(`${ask.orderName} is back in the confirm queue.`); setAsk(null); reload(); }
     catch (e) { show(e.message, 'err'); setAsk(null); reload(); }
   };
   return (

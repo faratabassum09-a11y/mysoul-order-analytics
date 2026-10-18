@@ -4,6 +4,7 @@
 const express = require('express');
 const multer = require('multer');
 const svc = require('../services/deskService');
+const D = require('../lib/desk');
 const { staffFromReq } = require('./flow');
 
 const wrap = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
@@ -19,17 +20,25 @@ router.use(wrap(async (req, res, next) => {
 const need = (...roles) => (req, res, next) => (req.staff.role === 'admin' || roles.includes(req.staff.role) ? next() : res.status(403).json({ error: 'Your role cannot do this.' }));
 const adminOnly = (req, res, next) => (req.staff.role === 'admin' ? next() : res.status(403).json({ error: 'Admins only' }));
 
-const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 8 * 1024 * 1024, files: 1 } });
-const takeFile = (field) => (req, res, next) => upload.single(field)(req, res, (e) => {
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 8 * 1024 * 1024, files: 10 } });
+const uploadErr = (next) => (e) => {
   if (!e) return next();
-  next(httpErr(400, e.code === 'LIMIT_FILE_SIZE' ? 'The photo is too large (max 8 MB).' : 'The upload failed. Try again.'));
-});
+  next(httpErr(400, e.code === 'LIMIT_FILE_SIZE' ? 'A photo is too large (max 8 MB each).' : e.code === 'LIMIT_UNEXPECTED_FILE' || e.code === 'LIMIT_FILE_COUNT' ? 'Add at most 10 photos.' : 'The upload failed. Try again.'));
+};
+const takeFile = (field) => (req, res, next) => upload.single(field)(req, res, uploadErr(next));
+// Several photos in one field (the older single-file field name keeps working). Puts them in req.photos.
+const takeFiles = (field, legacy) => (req, res, next) => upload.fields([{ name: field, maxCount: 10 }, { name: legacy, maxCount: 10 }])(req, res, uploadErr((e) => {
+  if (e) return next(e);
+  req.photos = [...((req.files && req.files[field]) || []), ...((req.files && req.files[legacy]) || [])];
+  next();
+}));
 const orderIdOf = (req) => { const n = Number(req.params.orderId); if (!Number.isInteger(n) || n <= 0) throw httpErr(400, 'Bad order number'); return n; };
 const who = (req) => ({ id: req.staff.id, name: req.staff.name, role: req.staff.role });
 
 router.get('/counts', wrap(async (req, res) => res.json(await svc.counts())));
-router.get('/config', wrap(async (req, res) => res.json(await svc.getConfig())));
-router.put('/config', adminOnly, wrap(async (req, res) => res.json(await svc.saveConfig(req.body || {}))));
+// Everyone signed in reads the settings (the screens need the names, hours and cancel reasons). Names come with their defaults so Settings can show what "reset" returns.
+router.get('/config', wrap(async (req, res) => res.json({ ...(await svc.getConfig()), labelDefaults: D.DEFAULT_LABELS, labelGroups: D.LABEL_GROUPS })));
+router.put('/config', adminOnly, wrap(async (req, res) => res.json({ ...(await svc.saveConfig(req.body || {})), labelDefaults: D.DEFAULT_LABELS, labelGroups: D.LABEL_GROUPS })));
 router.get('/overview', adminOnly, wrap(async (req, res) => res.json(await svc.overview(req.query))));
 router.post('/refresh', wrap(async (req, res) => res.json(await svc.refresh())));
 
@@ -47,6 +56,16 @@ router.get('/analysis.xlsx', wrap(async (req, res) => {
 router.get('/orders', wrap(async (req, res) => res.json(await svc.ordersList(req.query))));
 router.get('/orders/:orderId', wrap(async (req, res) => res.json(await svc.orderDetail(orderIdOf(req)))));
 router.get('/queue/:key', wrap(async (req, res) => res.json(await svc.queue(req.params.key, req.query))));
+// Confirm queue and Pending orders as boards: one column per follow-up, like the Dispatch queue
+router.get('/board/:kind', need('confirmation'), wrap(async (req, res) => res.json(await svc.callBoard(req.params.kind, { ...req.query, viewer: req.staff }))));
+
+// ---------------------------------------------------------------- Who works which order
+router.get('/team', wrap(async (req, res) => res.json({ team: await svc.team() })));
+router.get('/assign/config', adminOnly, wrap(async (req, res) => res.json(await svc.assignOverview())));
+router.put('/assign/config', adminOnly, wrap(async (req, res) => res.json(await svc.saveAssignConfig(req.body || {}))));
+router.post('/assign/rebalance', adminOnly, wrap(async (req, res) => res.json(await svc.rebalance(req.staff, (req.body && req.body.slot) || null))));
+router.post('/assign/bulk', adminOnly, wrap(async (req, res) => res.json(await svc.assignBulk(req.staff, req.body && req.body.orderIds, (req.body && req.body.userId) || null))));
+router.post('/orders/:orderId/assign', need('confirmation', 'packing'), wrap(async (req, res) => res.json(await svc.assignManual(who(req), orderIdOf(req), (req.body && req.body.userId) || null))));
 
 // One endpoint for the one-tap actions. "restore" (undo a cancellation) is admin-only; "dispatch" belongs to the packing team.
 router.post('/orders/:orderId/action', wrap(async (req, res) => {
@@ -65,18 +84,18 @@ router.post('/orders/:orderId/partial', need('confirmation'), takeFile('screensh
 // ---------------------------------------------------------------- Dispatch queue (packing team + admin): packing slip -> order packed -> order handover
 router.get('/dispatch/config', wrap(async (req, res) => res.json(await svc.getDispatchConfig())));
 router.put('/dispatch/config', adminOnly, wrap(async (req, res) => res.json(await svc.saveDispatchConfig(req.body || {}))));
-router.get('/dispatch/board', need('packing'), wrap(async (req, res) => res.json(await svc.dispatchBoard(req.query))));
+router.get('/dispatch/board', need('packing'), wrap(async (req, res) => res.json(await svc.dispatchBoard({ ...req.query, viewer: req.staff }))));
 router.get('/dispatch/:orderId/awb', need('packing'), wrap(async (req, res) => res.json(await svc.liveAwb(orderIdOf(req)))));
 router.post('/dispatch/:orderId/slip', need('packing'), wrap(async (req, res) => res.json(await svc.dispatchSlip(who(req), orderIdOf(req)))));
-router.post('/dispatch/:orderId/packed', need('packing'), takeFile('photo'), wrap(async (req, res) => {
+router.post('/dispatch/:orderId/packed', need('packing'), takeFiles('photos', 'photo'), wrap(async (req, res) => {
   const b = req.body || {};
-  res.json(await svc.dispatchPacked(who(req), orderIdOf(req), { awb: b.awb, courier: b.courier, file: req.file }));
+  res.json(await svc.dispatchPacked(who(req), orderIdOf(req), { awb: b.awb, courier: b.courier, files: req.photos }));
 }));
-router.post('/dispatch/handover', need('packing'), takeFile('manifest'), wrap(async (req, res) => {
+router.post('/dispatch/handover', need('packing'), takeFiles('manifests', 'manifest'), wrap(async (req, res) => {
   const b = req.body || {};
   let ids = [];
   try { ids = JSON.parse(b.orderIds); } catch (e) { ids = String(b.orderIds || '').split(','); } // the app sends JSON; a comma list also works
-  res.json(await svc.dispatchHandover(who(req), Array.isArray(ids) ? ids : [], { courier: b.courier, file: req.file }));
+  res.json(await svc.dispatchHandover(who(req), Array.isArray(ids) ? ids : [], { courier: b.courier, files: req.photos }));
 }));
 router.get('/proofs/:id', wrap(async (req, res) => {
   const p = await svc.proofFile(req.params.id);

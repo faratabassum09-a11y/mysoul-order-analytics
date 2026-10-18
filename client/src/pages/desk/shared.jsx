@@ -1,10 +1,27 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { api, deskProofUrl, deskShotUrl, useApi } from '../../api.js';
 import { Sheet } from '../../deskUi.jsx';
 import { compressPhoto, duration, fmtWhen, useNow, useServerOffset } from '../../flowUi.js';
 import { inr } from '../../format.js';
+import LABEL_FALLBACK from '../../labelDefaults.json';
 
 export const notifyDesk = () => window.dispatchEvent(new Event('desk-changed'));
+
+// ---------------------------------------------------------------- names an admin can change (Settings, Names & labels)
+// L('tabConfirm') gives the current name; fu('FU1') turns the fixed follow-up name the server stores into whatever the team calls it now.
+const FU_KEY = { FU1: 'fu1', FU2: 'fu2', FU3: 'fu3', 'Day 1': 'day1', 'Day 2': 'day2', 'Day 3': 'day3' };
+const LabelsCtx = createContext({ L: (k) => LABEL_FALLBACK[k] || k, fu: (c) => c, conf: null, reload: () => {} });
+export function LabelsProvider({ children }) {
+  const { data, reload } = useApi('/desk/config');
+  useEffect(() => { window.addEventListener('desk-config-changed', reload); return () => window.removeEventListener('desk-config-changed', reload); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  const value = useMemo(() => {
+    const names = { ...LABEL_FALLBACK, ...((data && data.labelDefaults) || {}), ...((data && data.labels) || {}) };
+    const L = (k) => names[k] || k;
+    return { L, fu: (c) => (FU_KEY[c] ? L(FU_KEY[c]) : c), conf: data || null, reload };
+  }, [data]); // eslint-disable-line react-hooks/exhaustive-deps
+  return <LabelsCtx.Provider value={value}>{children}</LabelsCtx.Provider>;
+}
+export const useLabels = () => useContext(LabelsCtx);
 
 // Live counts for the tab bar and the sidebar badge. Refreshes every 30 s and right after any action.
 export function useDeskCounts() {
@@ -19,24 +36,31 @@ export function useDeskCounts() {
   return counts;
 }
 
-export const useDeskConfig = () => useApi('/desk/config').data;
+export const useDeskConfig = () => useLabels().conf;
+
+// The people an admin can give a column's orders to: confirmation team for the call columns, packing team for the dispatch columns (admins can do both).
+export const useTeam = () => { const { data } = useApi('/desk/team'); return (data && data.team) || []; };
+export const peopleFor = (team, kind) => team.filter((p) => p.role === 'admin' || p.role === (kind === 'dispatch' ? 'packing' : 'confirmation'));
 
 // ---------------------------------------------------------------- small pieces
 export const STAGE_NAME = { confirm: 'Confirm queue', pending: 'Pending', dispatch: 'To dispatch', dispatched: 'Dispatched', cancelled: 'Cancelled', none: 'Not in queue' };
-export function StageTag({ stage, children }) { return <span className={`sd-tag ${stage}`}>{children || STAGE_NAME[stage] || stage}</span>; }
+const STAGE_KEY = { confirm: 'stageConfirm', pending: 'stagePending', dispatch: 'stageDispatch', dispatched: 'stageDispatched', cancelled: 'stageCancelled', none: 'stageNone' };
+export function StageTag({ stage, children }) { const { L } = useLabels(); return <span className={`sd-tag ${stage}`}>{children || (STAGE_KEY[stage] ? L(STAGE_KEY[stage]) : stage)}</span>; }
 export const PayTag = ({ o }) => {
+  const { L } = useLabels();
   const paid = /^paid$/i.test(o.financialStatus || '');
-  return <span className={`sd-pay ${paid ? 'paid' : 'cod'}`}>{paid ? 'Prepaid' : 'COD'}</span>;
+  return <span className={`sd-pay ${paid ? 'paid' : 'cod'}`}>{paid ? L('payPrepaid') : L('payCod')}</span>;
 };
 
 // The six calls an order can get, as a ladder: FU1 FU2 FU3, then Day 1 Day 2 Day 3 in Pending. A cancelled-by-silence order ends past the last rung.
 const RUNGS = ['FU1', 'FU2', 'FU3', 'Day 1', 'Day 2', 'Day 3'];
 export function Ladder({ stage, fuNo, dnpCount = 0 }) {
+  const { fu } = useLabels();
   const at = stage === 'confirm' ? fuNo - 1 : stage === 'pending' ? 2 + fuNo : -1;
   return (
-    <ol className="sd-ladder" aria-label={at >= 0 ? `Follow-up ${RUNGS[at]} of 6. ${dnpCount} unanswered so far.` : 'Follow-up progress'}>
+    <ol className="sd-ladder" aria-label={at >= 0 ? `Follow-up ${fu(RUNGS[at])} of 6. ${dnpCount} unanswered so far.` : 'Follow-up progress'}>
       {RUNGS.map((r, i) => (
-        <li key={r} className={`${i < at ? 'done' : i === at ? 'now' : ''} ${i >= 3 ? 'day' : ''} ${i === 3 ? 'gap' : ''}`}><i />{r}</li>
+        <li key={r} className={`${i < at ? 'done' : i === at ? 'now' : ''} ${i >= 3 ? 'day' : ''} ${i === 3 ? 'gap' : ''}`}><i />{fu(r)}</li>
       ))}
     </ol>
   );
@@ -92,24 +116,25 @@ export function CopyButton({ text, label = 'Copy', done = 'Copied' }) {
 export const addressBlock = (o) => [o.name, o.phone, o.address].filter(Boolean).join('\n');
 
 // What happens to the order if the person logs "did not pick up" now. Mirrors lib/desk.js so the form can say it before the tap.
-export function dnpOutcome(o, conf) {
+export function dnpOutcome(o, conf, L = (k) => LABEL_FALLBACK[k], fu = (c) => c) {
   if (!conf) return null;
-  const day = (ms) => new Date(ms).toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric', month: 'short', timeZone: 'Asia/Kolkata' });
-  if (o.stage === 'confirm' && o.fuNo < 3) { const h = conf.confirmHours[o.fuNo]; return { text: `Stays in the confirm queue as FU${o.fuNo + 1}, due ${h === 0 ? 'straight away' : `in ${h} h`}.`, tone: '' }; }
-  if (o.stage === 'confirm') return { text: `Moves to Pending orders. Day 1 follow-up is due ${day(Date.now() + conf.pendingDays[0] * 864e5)}.`, tone: 'warn' };
-  if (o.fuNo < 3) return { text: `Stays in Pending as Day ${o.fuNo + 1}, due ${day(new Date(o.pendingSince || Date.now()).getTime() + conf.pendingDays[o.fuNo] * 864e5)}.`, tone: '' };
-  return { text: 'This was the last follow-up. The order will be cancelled automatically and move to Cancelled orders.', tone: 'bad' };
+  const inH = (h) => (h === 0 ? 'straight away' : `in ${h} h`);
+  if (o.stage === 'confirm' && o.fuNo < 3) return { text: `Stays in ${L('tabConfirm')} as ${fu(`FU${o.fuNo + 1}`)}, due ${inH(conf.confirmHours[o.fuNo])}.`, tone: '' };
+  if (o.stage === 'confirm') return { text: `Moves to ${L('tabPending')}. ${fu('Day 1')} is due ${inH(conf.pendingHours[0])}.`, tone: 'warn' };
+  if (o.fuNo < 3) return { text: `Stays in ${L('tabPending')} as ${fu(`Day ${o.fuNo + 1}`)}, due ${inH(conf.pendingHours[o.fuNo])}.`, tone: '' };
+  return { text: `This was the last follow-up. The order will be cancelled automatically and move to ${L('tabCancelled')}.`, tone: 'bad' };
 }
 
 // ---------------------------------------------------------------- update-status sheet: choose an outcome, fill its form, save
 const CHOICES = [
-  ['confirm', 'Confirmed', 'Customer confirmed. Moves to the dispatch queue.', 'good'],
-  ['dnp', 'DNP', 'Did not pick up. Log the WhatsApp message.', 'warn'],
-  ['partial_paid', 'Partial paid', 'Customer paid part of the amount. Moves to dispatch.', 'violet'],
-  ['cancel', 'Cancelled', 'Customer cancelled or cannot be reached. A reason is required.', 'bad'],
+  ['confirm', 'actConfirm', (L) => `Customer confirmed. Moves to ${L('tabDispatch')}.`, 'good'],
+  ['dnp', 'actDnp', () => 'Did not pick up. Log the WhatsApp message.', 'warn'],
+  ['partial_paid', 'actPartial', (L) => `Customer paid part of the amount. Moves to ${L('tabDispatch')}.`, 'violet'],
+  ['cancel', 'actCancel', () => 'Customer cancelled or cannot be reached. A reason is required.', 'bad'],
 ];
 
 export function UpdateStatusSheet({ order: o, conf, now, offset, onClose, onDone, show, start = null }) {
+  const { L, fu } = useLabels();
   const [choice, setChoice] = useState(start);
   const [busy, setBusy] = useState(false);
   const notDue = o.dueAt && new Date(o.dueAt).getTime() > now + offset + 60000;
@@ -120,15 +145,15 @@ export function UpdateStatusSheet({ order: o, conf, now, offset, onClose, onDone
   };
   const post = (body) => api.post(`/desk/orders/${o.orderId}/action`, body);
   return (
-    <Sheet title={`Update status · ${o.orderName}`} onClose={onClose}>
-      <p className="muted">{o.name || 'No name'} · {o.stage === 'confirm' ? `FU${o.fuNo}` : `Pending Day ${o.fuNo}`} · {inr(o.total)}</p>
+    <Sheet title={`${L('btnUpdate')} · ${o.orderName}`} onClose={onClose}>
+      <p className="muted">{o.name || 'No name'} · {fu(o.stage === 'confirm' ? `FU${o.fuNo}` : `Day ${o.fuNo}`)} · {inr(o.total)}</p>
       {!choice && (
         <div className="sd-choices">
-          {CHOICES.map(([k, label, hint, tone]) => {
+          {CHOICES.map(([k, key, hint, tone]) => {
             const off = k === 'dnp' && notDue;
             return (
               <button key={k} className={`sd-choice ${tone}`} disabled={off} onClick={() => setChoice(k)}>
-                <b>{label}</b><span>{off ? `Opens ${fmtWhen(o.dueAt)}` : hint}</span>
+                <b>{L(key)}</b><span>{off ? `Opens ${fmtWhen(o.dueAt)}` : hint(L)}</span>
               </button>
             );
           })}
@@ -136,21 +161,22 @@ export function UpdateStatusSheet({ order: o, conf, now, offset, onClose, onDone
       )}
       {choice === 'confirm' && (
         <>
-          <p>Confirm {o.orderName} for {inr(o.total)}? It moves to the dispatch queue.</p>
-          <button className="btn big good" disabled={busy} onClick={() => run(() => post({ action: 'confirm' }), () => `${o.orderName} confirmed. It is now in the Dispatch queue.`)}>Yes, confirmed</button>
+          <p>{L('actConfirm')}: {o.orderName} for {inr(o.total)}? It moves to {L('tabDispatch')}.</p>
+          <button className="btn big good" disabled={busy} onClick={() => run(() => post({ action: 'confirm' }), () => `${o.orderName} confirmed. It is now in ${L('tabDispatch')}.`)}>Yes, {L('actConfirm').toLowerCase()}</button>
         </>
       )}
-      {choice === 'dnp' && <DnpForm o={o} conf={conf} busy={busy} onSave={(wa) => run(() => post({ action: 'dnp', whatsappShared: wa }), (r) => r.stage === 'pending' && o.stage === 'confirm' ? `${o.orderName}: no answer on FU3. Moved to Pending orders.` : r.stage === 'cancelled' ? `${o.orderName}: last follow-up got no answer. Auto-cancelled.` : `${o.orderName}: DNP saved. Next: ${r.stage === 'pending' ? `Day ${r.fuNo}` : `FU${r.fuNo}`}.`)} />}
+      {choice === 'dnp' && <DnpForm o={o} conf={conf} busy={busy} onSave={(wa) => run(() => post({ action: 'dnp', whatsappShared: wa }), (r) => r.stage === 'pending' && o.stage === 'confirm' ? `${o.orderName}: no answer on ${fu('FU3')}. Moved to ${L('tabPending')}.` : r.stage === 'cancelled' ? `${o.orderName}: last follow-up got no answer. Auto-cancelled.` : `${o.orderName}: ${L('actDnp')} saved. Next: ${fu(r.stage === 'pending' ? `Day ${r.fuNo}` : `FU${r.fuNo}`)}.`)} />}
       {choice === 'cancel' && <CancelForm o={o} conf={conf} busy={busy} onSave={(reason, note) => run(() => post({ action: 'cancel', reason, note }), () => `${o.orderName} cancelled.`)} />}
-      {choice === 'partial_paid' && <PartialForm o={o} conf={conf} busy={busy} onSave={(fd) => run(() => api.upload(`/desk/orders/${o.orderId}/partial`, fd), () => `${o.orderName} marked partial paid. It is now in the Dispatch queue.`)} />}
+      {choice === 'partial_paid' && <PartialForm o={o} conf={conf} busy={busy} onSave={(fd) => run(() => api.upload(`/desk/orders/${o.orderId}/partial`, fd), () => `${o.orderName} marked ${L('actPartial').toLowerCase()}. It is now in ${L('tabDispatch')}.`)} />}
       {choice && !start && <button className="btn ghost" disabled={busy} onClick={() => setChoice(null)}>Back</button>}
     </Sheet>
   );
 }
 
 function DnpForm({ o, conf, busy, onSave }) {
+  const { L, fu } = useLabels();
   const [wa, setWa] = useState(null);
-  const out = dnpOutcome(o, conf);
+  const out = dnpOutcome(o, conf, L, fu);
   return (
     <>
       <p className="sd-q" id="wa-q">Did you share the WhatsApp message?</p>
@@ -160,7 +186,7 @@ function DnpForm({ o, conf, busy, onSave }) {
         <button role="radio" aria-checked={wa === false} className={wa === false ? 'on no' : ''} onClick={() => setWa(false)}>No, not shared</button>
       </div>
       {out && <div className={`sd-next ${out.tone}`}><b>What happens next</b>{out.text}</div>}
-      <button className="btn big" disabled={busy || wa === null} onClick={() => onSave(wa)}>{wa === null ? 'Choose Yes or No to save' : 'Save DNP'}</button>
+      <button className="btn big" disabled={busy || wa === null} onClick={() => onSave(wa)}>{wa === null ? 'Choose Yes or No to save' : `Save ${L('actDnp')}`}</button>
     </>
   );
 }
@@ -223,40 +249,130 @@ function PartialForm({ o, conf, busy, onSave }) {
   );
 }
 
-// ---------------------------------------------------------------- the card in Confirm queue and Pending
-export function QueueCard({ o, now, offset, canAct, onUpdate, onOpen }) {
+// ---------------------------------------------------------------- who has this order
+// admin: a pick-list to give the order to someone (or take it back). A team member: "Take it" on an order nobody holds. Nothing at all when the column has assignment Off.
+export function AssigneeRow({ o, mode, isAdmin, me, people, onAssign }) {
+  if (!mode || mode === 'off') return null;
+  const mine = o.assignee && String(o.assignee.id) === String(me);
+  if (isAdmin) {
+    return (
+      <label className={`sd-assign ${o.assignee ? (o.assignee.auto ? 'auto' : 'manual') : 'none'}`} title={o.assignee ? (o.assignee.auto ? 'Assigned automatically' : 'Assigned by an admin') : 'Nobody has this order yet'}>
+        <span aria-hidden="true">👤</span>
+        <select value={o.assignee ? o.assignee.id : ''} onChange={(e) => onAssign(o.orderId, e.target.value)} aria-label={`Assigned to, order ${o.orderName}`}>
+          <option value="">{o.assignee ? 'Unassign' : 'Assign to…'}</option>
+          {o.assignee && !people.some((p) => p.id === o.assignee.id) && <option value={o.assignee.id}>{o.assignee.name}</option>}
+          {people.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+        </select>
+      </label>
+    );
+  }
+  if (o.assignee) return <span className={`sd-assign ${mine ? 'mine' : 'auto'}`}><span aria-hidden="true">👤</span>{mine ? 'Yours' : o.assignee.name}</span>;
+  return <button className="sd-assign none take" onClick={() => onAssign(o.orderId, 'me')}>＋ Take this order</button>;
+}
+
+// Plain "do it for this order" helper used by both boards.
+export function useAssign({ reload, show }) {
+  return useCallback(async (orderId, userId) => {
+    try { await api.post(`/desk/orders/${orderId}/assign`, { userId: userId || null }); notifyDesk(); reload(); }
+    catch (e) { show(e.message, 'err'); if (e.status === 409) reload(); }
+  }, [reload, show]);
+}
+
+// Dropdown at the top of a board: whose orders to show.
+export function WhoFilter({ value, onChange, people, show = true }) {
+  if (!show) return null;
+  return (
+    <label className="sd-who-filter"><span>Show</span>
+      <select value={value} onChange={(e) => onChange(e.target.value)} aria-label="Whose orders">
+        <option value="">Everyone's orders</option><option value="me">Mine</option><option value="none">Unassigned</option>
+        {people.length > 0 && <optgroup label="By person">{people.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}</optgroup>}
+      </select>
+    </label>
+  );
+}
+
+// Tiny per-person count under a column title: "Asha 4 · Bala 3 · Unassigned 1".
+export function Workload({ items }) {
+  if (!items.length) return null;
+  const m = new Map();
+  for (const o of items) { const k = o.assignee ? o.assignee.name : 'Unassigned'; m.set(k, (m.get(k) || 0) + 1); }
+  return <div className="dq-load">{[...m].map(([k, n]) => <span key={k} className={k === 'Unassigned' ? 'un' : ''}>{k} <b>{n}</b></span>)}</div>;
+}
+
+// ---------------------------------------------------------------- the card in Confirm queue and Pending: only what the caller needs
+export function QueueCard({ o, now, offset, canAct, onUpdate, onOpen, assign = null, picked = null, onPick = null }) {
+  const { L } = useLabels();
   const late = o.dueAt && new Date(o.dueAt).getTime() < now + offset - (o.stage === 'pending' ? 6 : 2) * 3600e3;
   const ready = o.dueAt && new Date(o.dueAt).getTime() <= now + offset;
   return (
-    <article className={`sd-card ${o.stage} fu${o.fuNo} ${late ? "late" : ready ? "ready" : ""}`} aria-label={`${o.orderName}, ${o.status}`}>
+    <article className={`sd-card ${o.stage} fu${o.fuNo} ${late ? 'late' : ready ? 'ready' : ''}`} aria-label={`${o.orderName}, ${o.status}`}>
       <header>
         <div className="sd-id">
+          {onPick && <input type="checkbox" className="dq-pick" checked={!!picked} onChange={() => onPick(o.orderId)} aria-label={`Select ${o.orderName}`} />}
           <button className="link" onClick={() => onOpen(o.orderId)}>{o.orderName}</button>
           <PayTag o={o} />
         </div>
         <DueChip o={o} now={now} offset={offset} />
       </header>
-      <div className="sd-who"><b>{o.name || 'No name'}</b>{o.city ? <span className="muted"> · {o.city}{o.state ? `, ${o.state}` : ''}</span> : null}</div>
-      <Ladder stage={o.stage} fuNo={o.fuNo} dnpCount={o.dnpCount} />
+      <div className="sd-who"><b>{o.name || 'No name'}</b>{o.city ? <span className="muted"> · {o.city}</span> : null}</div>
       <div className="sd-line"><span className="sd-amt">{inr(o.total)}</span><span className="sd-items" title={o.items}>{o.items || 'Items not loaded'}</span></div>
-      {(o.lastAction || o.source) && (
-        <div className="sd-foot">
-          {o.lastAction && <span title={fmtWhen(o.lastAction.at)}>Last: {o.lastAction.label} · {o.lastAction.by}</span>}
-          {o.source && <span className="chip">{o.source}</span>}
-        </div>
-      )}
+      {o.lastAction && <div className="sd-foot"><span title={fmtWhen(o.lastAction.at)}>Last: {o.lastAction.label}</span></div>}
+      {assign && <AssigneeRow o={o} {...assign} />}
       <div className="sd-actions">
-        {o.phone ? <a className="btn sd-call" href={`tel:${o.phone}`}><span aria-hidden="true">☎</span> Call {fmtPhone(o.phone)}</a> : <span className="btn ghost" aria-disabled="true">No phone number</span>}
-        {canAct && <button className="btn sd-update" onClick={() => onUpdate(o)}>Update status</button>}
+        {o.phone ? <a className="btn sd-call" href={`tel:${o.phone}`}><span aria-hidden="true">☎</span> {L('btnCall')} {fmtPhone(o.phone)}</a> : <span className="btn ghost" aria-disabled="true">No phone number</span>}
+        {canAct && <button className="btn sd-update" onClick={() => onUpdate(o)}>{L('btnUpdate')}</button>}
       </div>
     </article>
   );
 }
 
+// ---------------------------------------------------------------- several photos in one go (package photos, manifest photos)
+// Take photos with the camera one after another, or pick many from the gallery at once. Each is shrunk on the phone before upload.
+export function MultiPhotoField({ label, files, setFiles, required, max = 10, hint }) {
+  const [previews, setPreviews] = useState([]); const [err, setErr] = useState(''); const [busy, setBusy] = useState(false);
+  const urls = useRef([]);
+  useEffect(() => () => urls.current.forEach((u) => URL.revokeObjectURL(u)), []);
+  const add = async (e) => {
+    const picked = [...(e.target.files || [])]; e.target.value = '';
+    if (!picked.length) return;
+    setErr('');
+    const room = max - files.length;
+    if (picked.length > room) setErr(`You can add ${max} photos at most. Only the first ${room} were added.`);
+    setBusy(true);
+    const okF = []; const okU = [];
+    for (const f of picked.slice(0, Math.max(0, room))) {
+      try { const c = await compressPhoto(f); const u = URL.createObjectURL(c); urls.current.push(u); okF.push(c); okU.push(u); } catch (x) { setErr(x.message); }
+    }
+    setFiles((cur) => [...cur, ...okF]); setPreviews((cur) => [...cur, ...okU]); setBusy(false);
+  };
+  const drop = (i) => { setFiles((cur) => cur.filter((_, k) => k !== i)); setPreviews((cur) => cur.filter((_, k) => k !== i)); };
+  const full = files.length >= max;
+  return (
+    <>
+      <div className="sheet-label">{label}{required ? '' : ' (optional)'} <span className="muted">· {files.length} of {max}</span></div>
+      {hint && <small className="muted">{hint}</small>}
+      {previews.length > 0 && (
+        <div className="multi-photos">
+          {previews.map((u, i) => <figure key={u}><img src={u} alt={`${label} ${i + 1}`} /><button type="button" className="x" aria-label={`Remove photo ${i + 1}`} onClick={() => drop(i)}>✕</button></figure>)}
+        </div>
+      )}
+      <div className="multi-add">
+        <label className={`btn ghost ${full || busy ? 'off' : ''}`}>📷 {files.length ? 'Take another' : 'Take a photo'}<input type="file" accept="image/*" capture="environment" disabled={full || busy} onChange={add} hidden /></label>
+        <label className={`btn ghost ${full || busy ? 'off' : ''}`}>🖼 Choose photos<input type="file" accept="image/*" multiple disabled={full || busy} onChange={add} hidden /></label>
+      </div>
+      {busy && <small className="muted">Preparing photos…</small>}
+      {err && <div className="banner err">{err}</div>}
+    </>
+  );
+}
+
 // ---------------------------------------------------------------- order drawer: everything about one order
+const packedPhotos = (p) => (p.photoIds && p.photoIds.length ? p.photoIds : p.photoId ? [p.photoId] : []);
+const manifestPhotos = (h) => (h.manifestIds && h.manifestIds.length ? h.manifestIds : h.manifestId ? [h.manifestId] : []);
 const D = (s) => (s ? new Date(s).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'Asia/Kolkata' }) : '—');
 export function OrderDrawer({ orderId, onClose }) {
   const { data, error, loading } = useApi(`/desk/orders/${orderId}`);
+  const { fu } = useLabels();
   const [shot, setShot] = useState(null);
   const [proof, setProof] = useState(null); // { src, title }
   useEffect(() => { const k = (e) => e.key === 'Escape' && onClose(); window.addEventListener('keydown', k); return () => window.removeEventListener('keydown', k); }, [onClose]);
@@ -274,6 +390,8 @@ export function OrderDrawer({ orderId, onClose }) {
             <div className="sd-dhead"><StageTag stage={data.inQueue ? c.stage : 'none'}>{c.status}</StageTag>{c.stage === 'confirm' || c.stage === 'pending' ? <Ladder stage={c.stage} fuNo={c.fuNo} dnpCount={c.dnpCount} /> : null}</div>
             <p className="muted" style={{ margin: '4px 0 0' }}>Placed {D(c.orderAt || (s && s.createdAt))} (IST){c.payment ? ` · ${c.payment}` : ''}</p>
             {!data.inQueue && <div className="banner" style={{ marginTop: 10 }}>This order is older than the queue start date ({data.queueStart}), so it is not in the confirm queue. An admin can move the start date back in Settings.</div>}
+
+            {c.assignee && <p className="muted" style={{ margin: '6px 0 0' }}>👤 Assigned to <b>{c.assignee.name}</b>{c.assignee.auto ? ' (automatic)' : ''}</p>}
 
             <h2 className="sd-h">Customer</h2>
             <dl className="kv">
@@ -315,9 +433,9 @@ export function OrderDrawer({ orderId, onClose }) {
                 <b>Dispatch queue</b>
                 {c.dq.slip && <span>Packing slip done · {c.dq.slip.byName} · {D(c.dq.slip.at)}{c.dq.slip.late ? ' · late' : ''}</span>}
                 {c.dq.packed && <span>Packed · {c.dq.packed.byName} · {D(c.dq.packed.at)} · AWB {c.dq.packed.awb}{c.dq.packed.late ? ' · late' : ''}</span>}
-                {c.dq.packed && c.dq.packed.photoId && <ProofImg id={c.dq.packed.photoId} alt="Photo of the package" onOpen={(src, title) => setProof({ src, title })} />}
+                {c.dq.packed && packedPhotos(c.dq.packed).map((id, i) => <ProofImg key={id} id={id} alt={`Photo of the package ${i + 1}`} onOpen={(src, title) => setProof({ src, title })} />)}
                 {c.dq.handover && <span>Handed over · {c.dq.handover.byName} · {D(c.dq.handover.at)}{c.dq.handover.late ? ' · late' : ''}</span>}
-                {c.dq.handover && c.dq.handover.manifestId && <ProofImg id={c.dq.handover.manifestId} alt="Photo of the manifest" onOpen={(src, title) => setProof({ src, title })} />}
+                {c.dq.handover && manifestPhotos(c.dq.handover).map((id, i) => <ProofImg key={id} id={id} alt={`Photo of the manifest ${i + 1}`} onOpen={(src, title) => setProof({ src, title })} />)}
               </div>
             )}
             {data.shipway && <p className="muted">Shipway: <b>{data.shipway.status}</b>{data.shipway.carrier ? ` · ${data.shipway.carrier}` : ''}{data.shipway.awb ? ` · AWB ${data.shipway.awb}` : ''}</p>}

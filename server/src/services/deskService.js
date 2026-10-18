@@ -1,9 +1,10 @@
 // Shopify Desk: reads orders from Shopify only, keeps one DeskOrder per order, and applies the rules in lib/desk.js.
 // Every change is checked against the state the person saw (rev), stamped with who did it, and appended to the order's log.
 const crypto = require('crypto');
-const { DeskOrder, DeskShot, DispatchProof, ShopifyOrder, ShipwayShipment, Setting } = require('../models');
+const { DeskOrder, DeskShot, DispatchProof, ShopifyOrder, ShipwayShipment, Setting, StaffUser } = require('../models');
 const D = require('../lib/desk');
 const DP = require('../lib/dispatch');
+const AS = require('../lib/assign');
 const F = require('../lib/flow');
 const { resolveWindow } = require('../lib/windows');
 const { parseYmd, fmtDate } = require('../lib/istTime');
@@ -15,7 +16,7 @@ const ACTIVE = ['confirm', 'pending', 'dispatch'];
 // The queue starts from the day the desk was first opened, so the last 60 days of old orders do not flood it. Admins can move the date back.
 async function getConfig() {
   const s = await Setting.findOne({ key: 'desk.config' }).lean();
-  const cur = { ...D.DEFAULT_CONFIG, ...((s && s.value) || {}) };
+  const cur = { ...D.DEFAULT_CONFIG, ...D.migrateConfig((s && s.value) || {}) }; // settings saved before pending follow-ups moved to hours are converted on read
   if (!cur.startFrom) {
     cur.startFrom = fmtDate(new Date());
     await Setting.findOneAndUpdate({ key: 'desk.config' }, { key: 'desk.config', value: cur }, { upsert: true });
@@ -52,6 +53,7 @@ async function ingest(now = new Date()) {
     });
     cancelled += r.modifiedCount || 0;
   }
+  if (fresh.length) await autoAssign().catch((e) => console.warn('[desk] auto-assign failed:', e.message)); // new orders get their FU1 person at once
   return { added: fresh.length, cancelled };
 }
 let lastIngest = 0;
@@ -62,27 +64,36 @@ async function ingestIfStale(maxAgeMs = 15000) {
 }
 
 // ---------------------------------------------------------------- actions
-async function applyTransition(doc, t) {
+// assign: after the change, give the order (now in its next column) to the right person. The handover loop turns it off and does one pass for the whole batch.
+async function applyTransition(doc, t, { assign = true } = {}) {
   const upd = await DeskOrder.findOneAndUpdate({ orderId: doc.orderId, rev: doc.rev || 0 }, { $set: t.set, $push: { log: { $each: t.entries } }, $inc: { rev: 1 } }, { new: true }).lean();
   if (!upd) throw httpErr(409, 'Someone else just updated this order. Refresh to see its latest status.');
+  if (assign) await autoAssign({ orderIds: [doc.orderId] }).catch((e) => console.warn('[desk] auto-assign failed:', e.message));
   return upd;
 }
-async function loadForAction(orderId) {
+// With "team members see only their own orders" switched on, an order held by someone else can only be worked by them (or an admin).
+async function assertCanWork(user, doc) {
+  if (!user || user.role === 'admin' || !doc.assignee || !doc.assignee.id) return;
+  const cfg = await getAssignConfig();
+  if (!AS.canWork(user, doc, cfg.visibility)) throw httpErr(403, `Order #${doc.orderId} is assigned to ${doc.assignee.name || 'someone else'}. Ask an admin to reassign it.`);
+}
+async function loadForAction(orderId, user = null) {
   const doc = await DeskOrder.findOne({ orderId }).lean();
   if (!doc) throw httpErr(404, `Order #${orderId} is not in the Shopify Desk`);
+  await assertCanWork(user, doc);
   const so = await ShopifyOrder.findOne({ orderId }).select('total').lean();
   return { doc, total: so ? so.total : null };
 }
 
 async function act(user, orderId, action, input = {}) {
   if (action === 'partial_paid') throw httpErr(400, 'Use the partial payment form');
-  const { doc, total } = await loadForAction(orderId);
+  const { doc, total } = await loadForAction(orderId, user);
   const t = D.transition(doc, action, input, await getConfig(), user, { total, orderId });
   return brief(await applyTransition(doc, t));
 }
 
 async function savePartial(user, orderId, { amount, notes, file }) {
-  const { doc, total } = await loadForAction(orderId);
+  const { doc, total } = await loadForAction(orderId, user);
   const conf = await getConfig();
   let kind = null;
   if (file) {
@@ -124,9 +135,11 @@ function cardOf(desk, shop, conf, ship) {
   const collect = D.collectAmount(total, s.financialStatus, desk.partial);
   const itemsShort = String(s.itemsSummary || '').slice(0, 90);
   const text = D.renderTemplate(conf.whatsappTemplate, { name: D.firstName(c.name || a.name), order: s.name || `#${desk.orderId}`, items: itemsShort, amount: total == null ? '' : Math.round(total), balance: collect == null ? '' : Math.round(collect) });
-  const last = (desk.log || []).filter((e) => e.action !== 'enter_queue').slice(-1)[0];
+  const last = (desk.log || []).filter((e) => e.action !== 'enter_queue' && e.action !== 'assign').slice(-1)[0];
+  const asg = desk.assignee && desk.assignee.id ? desk.assignee : null;
   return {
-    orderId: desk.orderId, orderName: s.name || `#${desk.orderId}`, orderAt: desk.orderAt, stage: desk.stage, fuNo: desk.fuNo, fu: D.fuLabel(desk), status: D.statusLabel(desk),
+    orderId: desk.orderId, orderName: s.name || `#${desk.orderId}`, orderAt: desk.orderAt, stage: desk.stage, fuNo: desk.fuNo, fu: D.fuLabel(desk), fuShown: D.fuName(conf.labels, D.fuLabel(desk)), status: D.statusLabel(desk, conf.labels),
+    assignee: asg ? { id: asg.id, name: asg.name, auto: !!asg.auto, at: asg.at || null } : null,
     dueAt: desk.dueAt || null, pendingSince: desk.pendingSince || null, dnpCount: desk.dnpCount || 0, lastDnpAt: desk.lastDnpAt || null, lastAction: last ? { label: last.label, by: last.by, at: last.at } : null,
     name: c.name || a.name || null, phone: D.dialNumber(rawPhone), wa: D.waLink(rawPhone, text), email: c.email || null,
     city: a.city || null, state: a.state || null, address: addressLine(a),
@@ -223,6 +236,158 @@ async function queue(key, opts = {}) {
 }
 
 
+// ---------------------------------------------------------------- who works which order (see lib/assign.js)
+async function getAssignConfig() {
+  const s = await Setting.findOne({ key: 'desk.assign' }).lean();
+  return AS.normaliseAssignConfig({}, (s && s.value) || AS.DEFAULT_ASSIGN);
+}
+const activeTeam = async () => (await StaffUser.find({ active: true }).select('name role').sort({ role: 1, name: 1 }).lean()).map((u) => ({ id: String(u._id), name: u.name, role: u.role, active: true }));
+// Anyone signed in may see the names (the card's "assigned to" and the filter); only admins change them.
+async function team() { return (await activeTeam()).map(({ id, name, role }) => ({ id, name, role })); }
+
+// What a board needs to know about assignment: is it on for these columns, and who can an admin pick.
+const assignBrief = (cfg, slots) => ({ visibility: cfg.visibility, modes: Object.fromEntries(slots.map((k) => [k, cfg.slots[k].mode])) });
+
+// Narrow a list to one person's orders. admin: any person, "me", or "none" (unassigned). With "own only" on, a team member only ever gets their own plus the unassigned ones.
+function assigneeFilter(opts, cfg) {
+  const v = opts.viewer; const want = String(opts.assignee || ''); const f = {};
+  if (v && v.role !== 'admin' && cfg.visibility === 'own') {
+    if (want === 'none') f['assignee.id'] = null; else if (want === 'me') f['assignee.id'] = v.id; else f.$or = [{ 'assignee.id': v.id }, { 'assignee.id': null }];
+    return f;
+  }
+  if (want === 'none') f['assignee.id'] = null; else if (want === 'me' && v) f['assignee.id'] = v.id; else if (want) f['assignee.id'] = want;
+  return f;
+}
+
+// Orders open for work, oldest due first, so the longest-waiting order is handed out first.
+const urgency = (d) => new Date(d.dueAt || (d.dq && d.dq.stepAt) || d.confirmedAt || d.orderAt || 0).getTime();
+const loadsOf = (docs) => {
+  const loads = {};
+  for (const d of docs) { const slot = AS.slotOf(d); const a = d.assignee; if (slot && a && a.id && a.slot === slot) { (loads[slot] = loads[slot] || new Map()).set(a.id, ((loads[slot].get(a.id)) || 0) + 1); } }
+  return loads;
+};
+
+// Gives every open order its person, following each column's rule. Safe to run any time: orders that are fine are not touched, and an order someone
+// just worked on (its rev moved) is simply picked up on the next run. One run at a time.
+let assignChain = Promise.resolve();
+function autoAssign(opts = {}) { const run = assignChain.then(() => doAutoAssign(opts)); assignChain = run.catch(() => {}); return run; }
+async function doAutoAssign({ orderIds = null } = {}) {
+  const [cfg, users] = await Promise.all([getAssignConfig(), StaffUser.find({ active: true }).select('name').lean()]);
+  if (AS.SLOTS.every((k) => cfg.slots[k].mode === 'off') && !(await DeskOrder.exists({ stage: { $in: ACTIVE }, 'assignee.id': { $ne: null } }))) return { assigned: 0 };
+  const nameOf = new Map(users.map((u) => [String(u._id), u.name]));
+  const all = await DeskOrder.find({ stage: { $in: ACTIVE } }).select('orderId stage fuNo dq assignee confirmedAt dueAt orderAt rev').lean();
+  const loads = loadsOf(all);
+  const want = orderIds ? new Set(orderIds) : null;
+  const targets = all.filter((d) => !want || want.has(d.orderId)).sort((x, y) => urgency(x) - urgency(y));
+  const now = new Date(); const ops = []; let assigned = 0;
+  for (const d of targets) {
+    const slot = AS.slotOf(d); if (!slot) continue;
+    const r = AS.decide(d, cfg.slots[slot], { keepSamePerson: cfg.keepSamePerson, load: loads[slot] || new Map(), isActive: (id) => nameOf.has(String(id)) });
+    if (!r) continue;
+    const filter = { orderId: d.orderId, rev: d.rev || 0 };
+    if (!r.assigneeId) { ops.push({ updateOne: { filter, update: { $unset: { assignee: '' } } } }); continue; }
+    const same = d.assignee && d.assignee.id === r.assigneeId;
+    const name = nameOf.get(String(r.assigneeId)) || '';
+    const set = { assignee: { id: r.assigneeId, name, slot, at: same ? d.assignee.at || now : now, by: 'auto', auto: true } };
+    const update = { $set: set };
+    if (!same) { update.$push = { log: { at: now, by: 'System', byId: 'system', action: 'assign', stage: d.stage, fu: '', label: `Assigned to ${name} (auto)` } }; assigned++; }
+    ops.push({ updateOne: { filter, update } });
+    (loads[slot] = loads[slot] || new Map()).set(r.assigneeId, ((loads[slot].get(r.assigneeId)) || 0) + 1);
+  }
+  if (ops.length) await DeskOrder.bulkWrite(ops, { ordered: false });
+  return { assigned };
+}
+
+async function assignOverview() {
+  const [config, people, docs] = await Promise.all([getAssignConfig(), team(), DeskOrder.find({ stage: { $in: ACTIVE } }).select('orderId stage fuNo dq assignee').lean()]);
+  const load = Object.fromEntries(AS.SLOTS.map((k) => [k, { none: 0 }]));
+  for (const d of docs) { const slot = AS.slotOf(d); if (!slot) continue; const a = d.assignee && d.assignee.id && d.assignee.slot === slot ? d.assignee.id : null; if (a) load[slot][a] = (load[slot][a] || 0) + 1; else load[slot].none++; }
+  return { config, team: people, load, slots: AS.SLOTS };
+}
+async function saveAssignConfig(body = {}) {
+  const next = AS.normaliseAssignConfig(body, await getAssignConfig(), await activeTeam());
+  await Setting.findOneAndUpdate({ key: 'desk.assign' }, { key: 'desk.assign', value: next }, { upsert: true });
+  await autoAssign();
+  return assignOverview();
+}
+
+// An admin gives an order to a person (or takes it back: userId empty). A team member may only take an order nobody holds yet ("me").
+async function assignManual(user, orderId, userId) {
+  const { doc } = await loadForAction(orderId);
+  const slot = AS.slotOf(doc);
+  if (!slot) throw httpErr(409, `Order #${orderId} is no longer waiting for anyone. Refresh to see its latest status.`);
+  if ((await getAssignConfig()).slots[slot].mode === 'off') throw httpErr(409, 'Assigning is switched off for this column. An admin can turn on Manual or Auto in Settings, Team assignment.');
+  const target = userId === 'me' ? user.id : (userId || null);
+  if (user.role !== 'admin') {
+    if (String(target) !== String(user.id)) throw httpErr(403, 'Only an admin can give an order to someone else.');
+    if (doc.assignee && doc.assignee.id && doc.assignee.id !== user.id) throw httpErr(409, `Order #${orderId} was just taken by ${doc.assignee.name}.`);
+    if (!AS.roleFits(slot, user.role)) throw httpErr(403, 'Your role cannot work this column.');
+  }
+  const filter = { orderId, rev: doc.rev || 0 };
+  const now = new Date();
+  let upd;
+  if (!target) {
+    upd = await DeskOrder.findOneAndUpdate(filter, { $unset: { assignee: '' }, $push: { log: { at: now, by: user.name, byId: user.id, action: 'assign', stage: doc.stage, fu: '', label: 'Taken off the person it was assigned to' } } }, { new: true }).lean();
+  } else {
+    const u = await StaffUser.findById(target).select('name role active').lean();
+    if (!u || !u.active) throw httpErr(400, 'That person is not an active team member.');
+    if (!AS.roleFits(slot, u.role)) throw httpErr(400, `${u.name} is in a different team and cannot work this column.`);
+    const self = String(target) === String(user.id);
+    upd = await DeskOrder.findOneAndUpdate(filter, { $set: { assignee: { id: String(u._id), name: u.name, slot, at: now, by: user.name, auto: false } }, $push: { log: { at: now, by: user.name, byId: user.id, action: 'assign', stage: doc.stage, fu: '', label: self && user.role !== 'admin' ? `${u.name} took this order` : `Assigned to ${u.name} by ${user.name}` } } }, { new: true }).lean();
+  }
+  if (!upd) throw httpErr(409, 'Someone else just updated this order. Refresh to see its latest status.');
+  return { orderId, assignee: upd.assignee && upd.assignee.id ? { id: upd.assignee.id, name: upd.assignee.name, auto: false } : null };
+}
+async function assignBulk(user, orderIds, userId) {
+  const ids = [...new Set((orderIds || []).map(Number).filter((n) => Number.isInteger(n) && n > 0))].slice(0, 300);
+  if (!ids.length) throw httpErr(400, 'Pick at least one order');
+  let done = 0; const failed = [];
+  for (const id of ids) { try { await assignManual(user, id, userId); done++; } catch (e) { failed.push({ orderId: id, error: e.message }); } }
+  return { done, failed };
+}
+
+// "Share out again": every open order of an Auto column is redistributed to match the shares, moving as few orders as possible.
+// slot omitted = every Auto column. Useful right after adding people, when the old ones still hold everything.
+async function rebalance(user, slot = null) {
+  const [cfg, users] = await Promise.all([getAssignConfig(), StaffUser.find({ active: true }).select('name').lean()]);
+  const nameOf = new Map(users.map((u) => [String(u._id), u.name]));
+  const slots = slot ? [slot] : AS.SLOTS.filter((k) => cfg.slots[k].mode === 'auto');
+  if (slot && !AS.SLOTS.includes(slot)) throw httpErr(400, 'Unknown column');
+  if (slot && cfg.slots[slot].mode !== 'auto') throw httpErr(400, 'Share out again only works on a column set to Auto.');
+  await autoAssign(); // first make sure every order has someone
+  const all = await DeskOrder.find({ stage: { $in: ACTIVE } }).select('orderId stage fuNo dq assignee confirmedAt dueAt orderAt rev').lean();
+  const now = new Date(); const ops = []; let moved = 0;
+  for (const k of slots) {
+    const docs = all.filter((d) => AS.slotOf(d) === k).sort((x, y) => urgency(x) - urgency(y));
+    const members = cfg.slots[k].members.filter((m) => nameOf.has(String(m.id)));
+    const plan = AS.planRebalance(docs.map((d) => ({ orderId: d.orderId, assigneeId: d.assignee && d.assignee.slot === k ? d.assignee.id : null })), members);
+    for (const d of docs) {
+      const to = plan.get(d.orderId); if (!to) continue;
+      const name = nameOf.get(String(to));
+      ops.push({ updateOne: { filter: { orderId: d.orderId, rev: d.rev || 0 }, update: { $set: { assignee: { id: to, name, slot: k, at: now, by: user.name, auto: true } }, $push: { log: { at: now, by: user.name, byId: user.id, action: 'assign', stage: d.stage, fu: '', label: `Re-shared to ${name} by ${user.name}` } } } } });
+      moved++;
+    }
+  }
+  if (ops.length) await DeskOrder.bulkWrite(ops, { ordered: false });
+  return { moved, overview: await assignOverview() };
+}
+
+// The Confirm queue and the Pending orders boards: one column per follow-up, like the Dispatch queue.
+async function callBoard(kind, opts = {}) {
+  if (kind !== 'confirm' && kind !== 'pending') throw httpErr(404, 'Unknown board');
+  await ingestIfStale();
+  const now = new Date();
+  const acfg = await getAssignConfig();
+  const filter = { stage: kind, ...assigneeFilter(opts, acfg) };
+  const ids = await searchIds(opts.q);
+  if (ids) filter.orderId = { $in: ids };
+  const desks = await DeskOrder.find(filter).sort({ dueAt: 1 }).limit(1000).lean();
+  const [cards, c] = await Promise.all([withShop(desks), counts(now)]);
+  const columns = { 1: [], 2: [], 3: [] };
+  for (const card of cards) if (columns[card.fuNo]) columns[card.fuNo].push(card);
+  return { now, kind, counts: c, columns, shown: cards.length, assign: assignBrief(acfg, [1, 2, 3].map((n) => `${kind}${n}`)) };
+}
+
 // ---------------------------------------------------------------- Dispatch queue: packing slip -> order packed -> order handover -> in-transit
 async function getDispatchConfig() {
   const s = await Setting.findOne({ key: 'desk.dispatch' }).lean();
@@ -234,117 +399,118 @@ async function saveDispatchConfig(body) {
   return next;
 }
 
-// Reads one order's tracking number(s) straight from Shopify (the packing person may open the form seconds after the label was made).
-async function liveAwb(orderId) {
-  const have = await ShopifyOrder.findOne({ orderId }).select('tracking').lean();
-  let tracking = (have && have.tracking) || [];
-  const client = require('./shopifyClient');
-  if (client.isConfigured()) {
-    try {
-      const node = await client.fetchByNumber(orderId);
-      const doc = node && require('../lib/shopifyMap').normalizeOrder(node);
-      if (doc && doc.orderId === orderId) {
-        tracking = doc.tracking || [];
-        await ShopifyOrder.updateOne({ orderId }, { $set: { tracking } });
-      }
-    } catch (e) { /* Shopify busy or offline: fall back to what is saved */ }
+// The AWB and the courier come from Shipway, not from typing. Asking Shipway again right now matters: the label may have been made a minute ago.
+// If Shipway cannot be reached the last saved answer is used.
+async function liveAwb(orderId, { refresh = true } = {}) {
+  const client = require('./shipwayClient');
+  if (refresh && client.isConfigured()) {
+    try { await require('./shipwaySync').refreshOne(orderId); } catch (e) { /* Shipway busy or offline: fall back to what is saved */ }
   }
   const ship = await ShipwayShipment.findOne({ orderId, found: true }).select('awb carrier').lean();
-  const t = tracking[0];
-  if (t && t.number) return { awb: t.number, courier: t.company || (ship && ship.carrier) || '', source: 'Shopify' };
-  if (ship && ship.awb) return { awb: ship.awb, courier: ship.carrier || '', source: 'Shipway' };
-  return { awb: '', courier: '', source: null };
+  const dconf = await getDispatchConfig();
+  if (ship && ship.awb) return { awb: ship.awb, courier: ship.carrier || '', source: 'Shipway', shipwayConfigured: client.isConfigured(), allowManual: dconf.allowManualAwb };
+  return { awb: '', courier: '', source: null, shipwayConfigured: client.isConfigured(), allowManual: dconf.allowManualAwb };
 }
 
 async function dispatchBoard(opts = {}) {
   await ingestIfStale();
   const now = new Date();
-  const dconf = await getDispatchConfig();
-  const filter = { stage: 'dispatch' };
+  const [dconf, acfg] = await Promise.all([getDispatchConfig(), getAssignConfig()]);
+  const filter = { stage: 'dispatch', ...assigneeFilter(opts, acfg) };
   const ids = await searchIds(opts.q);
   if (ids) filter.orderId = { $in: ids };
   const desks = await DeskOrder.find(filter).sort({ confirmedAt: 1 }).limit(500).lean();
-  const orderIds = desks.map((d) => d.orderId);
-  const [cards, trk, all] = await Promise.all([
+  const [cards, all] = await Promise.all([
     withShop(desks, { ship: true }),
-    ShopifyOrder.find({ orderId: { $in: orderIds } }).select('orderId tracking').lean(),
     DeskOrder.find({ stage: 'dispatch' }).select('orderId dq confirmedAt orderAt').lean(),
   ]);
-  const tBy = new Map(trk.map((x) => [x.orderId, x.tracking || []]));
   const columns = { slip: [], packed: [], handover: [] };
   cards.forEach((c, i) => {
     const d = desks[i]; const step = DP.stepOf(d); const due = DP.dueAt(d, dconf);
-    const t = (tBy.get(c.orderId) || [])[0];
     columns[step].push({
       ...c,
       dq: {
         step, stepAt: DP.stepStart(d), dueAt: due, overdue: !!due && due.getTime() < now.getTime(),
         slip: (d.dq && d.dq.slip) || null, packed: (d.dq && d.dq.packed) || null,
-        suggestedAwb: (t && t.number) || (c.shipway && c.shipway.awb) || '',
-        suggestedCourier: (t && t.company) || (c.shipway && c.shipway.carrier) || '',
+        suggestedAwb: (c.shipway && c.shipway.awb) || '', // from Shipway
+        suggestedCourier: (c.shipway && c.shipway.carrier) || '',
       },
     });
   });
   for (const k of DP.STEPS) columns[k].sort((a, b) => new Date(a.dq.dueAt || 0) - new Date(b.dq.dueAt || 0));
   const collect = cards.reduce((n, c) => n + (c.collect || 0), 0);
-  return { now, config: dconf, columns, counts: DP.stepCounts(all, dconf, now), collectTotal: D.rupees(collect), shown: cards.length };
+  return { now, config: dconf, columns, counts: DP.stepCounts(all, dconf, now), collectTotal: D.rupees(collect), shown: cards.length, assign: assignBrief(acfg, ['slip', 'packed', 'handover']) };
 }
 
 async function dispatchSlip(user, orderId) {
-  const { doc } = await loadForAction(orderId);
+  const { doc } = await loadForAction(orderId, user);
   const t = DP.slipDone(doc, await getDispatchConfig(), user);
   return brief(await applyTransition(doc, t));
 }
 
-const PHOTO_ERR = 'The file must be a photo (JPG, PNG or WebP).';
+const PHOTO_ERR = 'Every file must be a photo (JPG, PNG or WebP).';
 async function storeProof(kind, file, user, extra) {
   return DispatchProof.create({ kind, ...extra, mime: F.mimeOf(file.buffer), size: file.buffer.length, sha256: crypto.createHash('sha256').update(file.buffer).digest('hex'), data: file.buffer, byName: user.name });
 }
+const checkPhotos = (files) => {
+  if (files.length > DP.MAX_PHOTOS) throw httpErr(400, `Add at most ${DP.MAX_PHOTOS} photos.`);
+  if (files.some((f) => F.sniffMedia(f.buffer) !== 'photo')) throw httpErr(400, PHOTO_ERR);
+};
+const dropProofs = (proofs) => (proofs.length ? DispatchProof.deleteMany({ _id: { $in: proofs.map((x) => x._id) } }).catch(() => {}) : null);
 
-async function dispatchPacked(user, orderId, { awb, courier, file }) {
-  const { doc } = await loadForAction(orderId);
+// The person only adds the photos. AWB and courier are taken from Shipway here on the server, so a typed or pasted value cannot differ from the label.
+// Only when Shipway has no AWB for the order yet (and Settings allows it) is the typed AWB used.
+async function dispatchPacked(user, orderId, { awb, courier, files = [] }) {
+  const { doc } = await loadForAction(orderId, user);
   const dconf = await getDispatchConfig();
-  if (file && F.sniffMedia(file.buffer) !== 'photo') throw httpErr(400, PHOTO_ERR);
-  const input = { awb, courier, photoId: file ? 'pending' : null };
-  DP.packedDone(doc, input, dconf, user); // dry run: every rule is checked before anything is stored
-  const clean = DP.cleanAwb(awb);
-  const clash = await DeskOrder.findOne({ orderId: { $ne: orderId }, 'dq.packed.awb': clean }).select('orderId').lean();
-  if (clash) throw httpErr(409, `AWB ${clean} is already on order #${clash.orderId}. Check the number on the label.`);
-  const proof = file ? await storeProof('package', file, user, { orderId }) : null;
-  try {
-    const t = DP.packedDone(doc, { awb, courier, photoId: proof ? String(proof._id) : null }, dconf, user);
-    return brief(await applyTransition(doc, t));
-  } catch (e) {
-    if (proof) await DispatchProof.deleteOne({ _id: proof._id }).catch(() => {});
-    throw e;
+  checkPhotos(files);
+  const live = await liveAwb(orderId);
+  let useAwb = live.awb; let useCourier = live.courier;
+  if (!useAwb) {
+    if (!dconf.allowManualAwb) throw httpErr(409, 'Shipway has no AWB for this order yet. Create the shipment in Shipway, then press Fetch again.');
+    useAwb = awb; useCourier = courier || '';
   }
+  const input = { awb: useAwb, courier: useCourier, photoIds: files.map((_, i) => `pending${i}`) };
+  DP.packedDone(doc, input, dconf, user); // dry run: every rule is checked before anything is stored
+  const clean = DP.cleanAwb(useAwb);
+  const clash = await DeskOrder.findOne({ orderId: { $ne: orderId }, 'dq.packed.awb': clean }).select('orderId').lean();
+  if (clash) throw httpErr(409, `AWB ${clean} is already on order #${clash.orderId}. Check the shipment in Shipway.`);
+  const proofs = [];
+  try {
+    for (const f of files) proofs.push(await storeProof('package', f, user, { orderId }));
+    const t = DP.packedDone(doc, { ...input, photoIds: proofs.map((x) => String(x._id)) }, dconf, user);
+    return brief(await applyTransition(doc, t));
+  } catch (e) { await dropProofs(proofs); throw e; }
 }
 
-// One manifest photo can cover a whole courier pickup: orderIds is every order on it. All are checked first, then saved.
-async function dispatchHandover(user, orderIds, { courier, file }) {
+// One manifest (one or more photos of it) can cover a whole courier pickup: orderIds is every order on it. All are checked first, then saved.
+async function dispatchHandover(user, orderIds, { courier, files = [] }) {
   const ids = [...new Set((orderIds || []).map(Number).filter((n) => Number.isInteger(n) && n > 0))];
   if (!ids.length) throw httpErr(400, 'Pick at least one order');
   if (ids.length > DP.MAX_HANDOVER_BATCH) throw httpErr(400, `Hand over at most ${DP.MAX_HANDOVER_BATCH} orders on one manifest`);
   const dconf = await getDispatchConfig();
-  if (file && F.sniffMedia(file.buffer) !== 'photo') throw httpErr(400, PHOTO_ERR);
+  checkPhotos(files);
   const docs = await DeskOrder.find({ orderId: { $in: ids } }).lean();
   const by = new Map(docs.map((d) => [d.orderId, d]));
+  const dry = files.map((_, i) => `pending${i}`);
   const problems = [];
   for (const id of ids) {
     const d = by.get(id);
     if (!d) { problems.push(`#${id}: not in the Shopify Desk`); continue; }
-    try { DP.handoverDone(d, { courier, manifestId: file ? 'pending' : null }, dconf, user); } catch (e) { problems.push(`#${id}: ${e.message}`); }
+    try { await assertCanWork(user, d); DP.handoverDone(d, { courier, manifestIds: dry }, dconf, user); } catch (e) { problems.push(`#${id}: ${e.message}`); }
   }
   if (problems.length) throw httpErr(409, `Nothing was saved. ${problems.join(' ')}`);
-  const proof = file ? await storeProof('manifest', file, user, { orderIds: ids }) : null;
+  const proofs = [];
+  for (const f of files) proofs.push(await storeProof('manifest', f, user, { orderIds: ids }));
+  const manifestIds = proofs.map((x) => String(x._id));
   const done = []; const failed = [];
   for (const id of ids) {
     try {
-      const t = DP.handoverDone(by.get(id), { courier, manifestId: proof ? String(proof._id) : null }, dconf, user);
-      done.push(brief(await applyTransition(by.get(id), t)));
+      const t = DP.handoverDone(by.get(id), { courier, manifestIds }, dconf, user);
+      done.push(brief(await applyTransition(by.get(id), t, { assign: false })));
     } catch (e) { failed.push({ orderId: id, error: e.message }); }
   }
-  if (!done.length && proof) await DispatchProof.deleteOne({ _id: proof._id }).catch(() => {});
+  if (!done.length) await dropProofs(proofs);
   return { done, failed };
 }
 
@@ -377,7 +543,7 @@ async function transitList(opts = {}) {
     return {
       orderId: c.orderId, orderName: c.orderName, name: c.name, phone: c.phone, city: c.city, state: c.state, total: c.total, collect: c.collect, payment: c.payment, items: c.items,
       handedOverAt: at || null, handedOverBy: d.dispatch && d.dispatch.byName, awb: (h && h.awb) || (d.dispatch && d.dispatch.awb) || '', courier: (h && h.carrier) || (d.dispatch && d.dispatch.courier) || '',
-      manifestId: (d.dq && d.dq.handover && d.dq.handover.manifestId) || null, packagePhotoId: (d.dq && d.dq.packed && d.dq.packed.photoId) || null,
+      manifestId: (d.dq && d.dq.handover && d.dq.handover.manifestId) || null, manifestIds: (d.dq && d.dq.handover && d.dq.handover.manifestIds) || [], packagePhotoId: (d.dq && d.dq.packed && d.dq.packed.photoId) || null,
       shipway: h ? { status: h.status, code: h.statusCode, group: h.group || 'other', final: !!h.final, statusAt: h.statusAt, checkedAt: h.checkedAt } : null,
       days: at ? Math.max(0, Math.floor((now - new Date(at).getTime()) / 864e5)) : null,
     };
@@ -424,6 +590,7 @@ async function refreshTransit({ ids = null, limit = 60, minAgeMin = 0 } = {}) {
 // ---------------------------------------------------------------- all Shopify orders
 async function ordersList(q = {}) {
   await ingestIfStale();
+  const dconf = await getConfig();
   const w = resolveWindow(q.window || 'this_month', new Date(), { from: q.from, to: q.to });
   const base = { test: { $ne: true } };
   if (w.start) base.createdAt = { $gte: w.start, $lt: w.end };
@@ -450,7 +617,7 @@ async function ordersList(q = {}) {
     return {
       orderId: o.orderId, orderName: s.name || `#${o.orderId}`, createdAt: s.createdAt, name: (s.customer && s.customer.name) || (s.address && s.address.name) || null,
       phone: D.dialNumber((s.customer && s.customer.phone) || (s.address && s.address.phone)), city: s.address && s.address.city, items: s.itemsSummary || '',
-      total: s.total, payment: paymentLabel(s), financialStatus: s.financialStatus, stage: d ? d.stage : 'none', fu: d ? D.fuLabel(d) : '', status: D.statusLabel(d),
+      total: s.total, payment: paymentLabel(s), financialStatus: s.financialStatus, stage: d ? d.stage : 'none', fu: d ? D.fuLabel(d) : '', fuShown: d ? D.fuName(dconf.labels, D.fuLabel(d)) : '', status: D.statusLabel(d, dconf.labels),
       partialAmount: d && d.partial ? d.partial.amount : null, collect: D.collectAmount(s.total, s.financialStatus, d && d.partial), cancelReason: d && d.cancel ? d.cancel.reason : null,
       source: s.marketing && (s.marketing.sourceGroup || s.marketing.utmSource) || '',
     };
@@ -469,7 +636,7 @@ async function orderDetail(orderId) {
   ]);
   if (!shop && !desk) throw httpErr(404, `Order #${orderId} was not found`);
   const card = cardOf(desk || { orderId, stage: 'none', fuNo: 0, log: [] }, shop, conf, ship);
-  if (!desk) card.status = 'Not in queue';
+  if (!desk) card.status = D.statusLabel(null, conf.labels);
   return {
     card, inQueue: !!desk,
     shopify: shop ? { ...shop, _id: undefined } : null,
@@ -571,6 +738,7 @@ async function refresh() {
   try { pulled = await shopify.run({}); } catch (e) { if (e.status !== 409) throw e; } // 409 = a sync is already running; use what it has so far
   lastIngest = Date.now();
   const r = await ingest();
+  await autoAssign().catch(() => {});
   return { pulled: pulled ? pulled.saved : null, ...r };
 }
 
@@ -585,4 +753,4 @@ function start() {
   }
 }
 
-module.exports = { analysisData, analysisSheet, getConfig, saveConfig, getDispatchConfig, saveDispatchConfig, liveAwb, dispatchBoard, dispatchSlip, dispatchPacked, dispatchHandover, proofFile, transitList, refreshTransit, ingest, ingestIfStale, act, savePartial, shotFile, counts, queue, ordersList, orderDetail, overview, refresh, start, cardOf };
+module.exports = { getAssignConfig, saveAssignConfig, assignOverview, autoAssign, assignManual, assignBulk, rebalance, team, callBoard, analysisData, analysisSheet, getConfig, saveConfig, getDispatchConfig, saveDispatchConfig, liveAwb, dispatchBoard, dispatchSlip, dispatchPacked, dispatchHandover, proofFile, transitList, refreshTransit, ingest, ingestIfStale, act, savePartial, shotFile, counts, queue, ordersList, orderDetail, overview, refresh, start, cardOf };

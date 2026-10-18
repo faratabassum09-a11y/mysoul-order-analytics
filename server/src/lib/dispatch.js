@@ -9,15 +9,19 @@ const { istParts, istToDate, startOfDay, fmtDate, parseYmd, DAY } = require('./i
 const STEPS = ['slip', 'packed', 'handover'];
 const STEP_LABEL = { slip: 'Packing slip', packed: 'Order packed', handover: 'Order handover' };
 const MAX_HANDOVER_BATCH = 50;
+const MAX_PHOTOS = 10; // photos per package, and per manifest
 
 const httpErr = (status, message, extra = {}) => Object.assign(new Error(message), { status, ...extra });
 
 // ------------------------------------------------------------------------------------------------ settings
 // workingDays: 0 = Monday ... 6 = Sunday (same numbering as istParts().dow). holidays: 'YYYY-MM-DD' (IST).
 // dayOffset: working days after the day the step starts. 0 = the same working day, unless the cut-off time has already passed: then the next working day.
+// allowManualAwb: the AWB and courier come from Shipway by themselves. When Shipway has none for an order yet, true lets the person type the AWB so the box is not stuck;
+// false makes them wait for Shipway.
 const DEFAULT_DISPATCH_CONFIG = {
   workingDays: [0, 1, 2, 3, 4, 5],
   holidays: [],
+  allowManualAwb: true,
   stages: {
     slip: { dueTime: '12:00', dayOffset: 0 },
     packed: { dueTime: '12:00', dayOffset: 0, requirePhoto: true },
@@ -30,7 +34,8 @@ const TIME_RX = /^([01]\d|2[0-3]):([0-5]\d)$/;
 function normaliseDispatchConfig(body = {}, current = DEFAULT_DISPATCH_CONFIG) {
   const base = { ...DEFAULT_DISPATCH_CONFIG, ...current, stages: { ...DEFAULT_DISPATCH_CONFIG.stages } };
   for (const k of STEPS) base.stages[k] = { ...DEFAULT_DISPATCH_CONFIG.stages[k], ...((current && current.stages && current.stages[k]) || {}) };
-  const next = { workingDays: [...base.workingDays], holidays: [...base.holidays], stages: base.stages };
+  const next = { workingDays: [...base.workingDays], holidays: [...base.holidays], allowManualAwb: base.allowManualAwb !== false, stages: base.stages };
+  if (body.allowManualAwb !== undefined) next.allowManualAwb = !!body.allowManualAwb;
 
   if (body.workingDays !== undefined) {
     const days = [...new Set((Array.isArray(body.workingDays) ? body.workingDays : []).map(Number))];
@@ -127,25 +132,32 @@ function cleanAwb(raw) {
   return s;
 }
 
-// input: { awb, courier, photoId }
+// One photo (photoId / manifestId) or several (photoIds / manifestIds): the first one is kept in photoId / manifestId too, so older screens still find it.
+const idsOf = (many, one) => [...new Set((Array.isArray(many) && many.length ? many : one ? [one] : []).map(String).filter(Boolean))];
+
+// input: { awb, courier, photoIds } (photoId still works for one photo)
 function packedDone(doc, input = {}, conf, who = { id: 'system', name: 'System' }, now = new Date()) {
   if (stepOf(doc) !== 'packed') throw wrongStep(doc, 'packed');
   const awb = cleanAwb(input.awb);
-  if (conf.stages.packed.requirePhoto && !input.photoId) throw httpErr(400, 'Take a photo of the packed package first');
+  const photoIds = idsOf(input.photoIds, input.photoId);
+  if (photoIds.length > MAX_PHOTOS) throw httpErr(400, `Add at most ${MAX_PHOTOS} photos`);
+  if (conf.stages.packed.requirePhoto && !photoIds.length) throw httpErr(400, 'Add at least one photo of the packed package first');
   const courier = String(input.courier || '').trim().slice(0, 60);
   const t = timing(doc, conf, now);
-  const dq = { ...(doc.dq || {}), step: 'handover', stepAt: now, packed: { at: now, byName: who.name, byId: who.id, awb, courier, photoId: input.photoId || null, ...t } };
+  const dq = { ...(doc.dq || {}), step: 'handover', stepAt: now, packed: { at: now, byName: who.name, byId: who.id, awb, courier, photoId: photoIds[0] || null, photoIds, ...t } };
   return { set: { dq }, entries: [{ ...base(doc, who, now), action: 'packed', label: `Order packed · AWB ${awb}${t.late ? ' (late)' : ''}` }] };
 }
 
-// input: { manifestId, courier }. The order leaves the queue and becomes an In-transit order.
+// input: { manifestIds, courier } (manifestId still works for one photo). The order leaves the queue and becomes an In-transit order.
 function handoverDone(doc, input = {}, conf, who = { id: 'system', name: 'System' }, now = new Date()) {
   if (stepOf(doc) !== 'handover') throw wrongStep(doc, 'handover');
-  if (conf.stages.handover.requirePhoto && !input.manifestId) throw httpErr(400, 'Upload a photo of the manifest first');
+  const manifestIds = idsOf(input.manifestIds, input.manifestId);
+  if (manifestIds.length > MAX_PHOTOS) throw httpErr(400, `Add at most ${MAX_PHOTOS} photos`);
+  if (conf.stages.handover.requirePhoto && !manifestIds.length) throw httpErr(400, 'Add at least one photo of the manifest first');
   const packed = (doc.dq && doc.dq.packed) || {};
   const courier = String(input.courier || packed.courier || '').trim().slice(0, 60);
   const t = timing(doc, conf, now);
-  const dq = { ...(doc.dq || {}), step: 'done', stepAt: now, handover: { at: now, byName: who.name, byId: who.id, manifestId: input.manifestId || null, ...t } };
+  const dq = { ...(doc.dq || {}), step: 'done', stepAt: now, handover: { at: now, byName: who.name, byId: who.id, manifestId: manifestIds[0] || null, manifestIds, ...t } };
   return {
     set: { stage: 'dispatched', dq, dispatch: { at: now, byName: who.name, awb: packed.awb || '', courier, note: '' } },
     // action "dispatch" on purpose: the Overview's per-person "dispatched" count reads it
@@ -170,7 +182,7 @@ function stepCounts(docs, conf, now = new Date()) {
 const timeLabel = (hhmm) => { const [h, m] = hhmm.split(':').map(Number); return `${((h + 11) % 12) + 1}:${String(m).padStart(2, '0')} ${h < 12 ? 'AM' : 'PM'}`; };
 
 module.exports = {
-  STEPS, STEP_LABEL, MAX_HANDOVER_BATCH, DEFAULT_DISPATCH_CONFIG, httpErr,
+  STEPS, STEP_LABEL, MAX_HANDOVER_BATCH, MAX_PHOTOS, DEFAULT_DISPATCH_CONFIG, httpErr, idsOf,
   normaliseDispatchConfig, isWorkingDay, nextWorkingDay, dueFor, stepOf, stepStart, dueAt,
   slipDone, packedDone, handoverDone, cleanAwb, stepCounts, timeLabel,
 };
