@@ -40,6 +40,8 @@ router.get('/counts', wrap(async (req, res) => res.json(await svc.counts())));
 router.get('/config', wrap(async (req, res) => res.json({ ...(await svc.getConfig()), labelDefaults: D.DEFAULT_LABELS, labelGroups: D.LABEL_GROUPS })));
 router.put('/config', adminOnly, wrap(async (req, res) => res.json({ ...(await svc.saveConfig(req.body || {})), labelDefaults: D.DEFAULT_LABELS, labelGroups: D.LABEL_GROUPS })));
 router.get('/overview', adminOnly, wrap(async (req, res) => res.json(await svc.overview(req.query))));
+// Team performance: what every person did in a window (admin only)
+router.get('/team-performance', adminOnly, wrap(async (req, res) => res.json(await require('../services/teamPerfService').report(req.query))));
 router.post('/refresh', wrap(async (req, res) => res.json(await svc.refresh())));
 
 router.get('/analysis', wrap(async (req, res) => res.json(await svc.analysisData(req.query))));

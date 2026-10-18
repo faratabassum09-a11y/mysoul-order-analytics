@@ -8,6 +8,7 @@ import ConfirmQueue from './pages/ConfirmQueue.jsx';
 import DispatchDesk from './pages/DispatchDesk.jsx';
 import TeamLogin, { ChangePassword, homeFor } from './pages/TeamLogin.jsx';
 import Overview from './pages/Overview.jsx';
+import TeamDashboard from './pages/TeamDashboard.jsx';
 import Trends from './pages/Trends.jsx';
 import PaymentMode from './pages/PaymentMode.jsx';
 import Campaigns from './pages/Campaigns.jsx';
@@ -18,7 +19,7 @@ import Settings from './pages/Settings.jsx';
 
 // Third item 'sub' = an indented entry that lives under the item above it.
 const NAV = [
-  ['/', 'Overview'], ['/shopify-desk', 'Shopify desk'], ['/trends', 'Trends'], ['/payment-mode', 'Payment mode'], ['/campaigns', 'Campaigns'], ['/reasons', 'Reasons'],
+  ['/', 'Overview'], ['/shopify-desk', 'Shopify desk'], ['/team-performance', 'Team performance'], ['/trends', 'Trends'], ['/payment-mode', 'Payment mode'], ['/campaigns', 'Campaigns'], ['/reasons', 'Reasons'],
   ['/orders', 'Orders'], ['/confirm-queue', 'Confirm queue', 'sub'], ['/dispatch-desk', 'Dispatch desk', 'sub'],
   ['/issues', 'Data issues'], ['/settings', 'Settings'],
 ];
@@ -137,6 +138,7 @@ function Dashboard({ user }) {
       <div className="main">
         <Routes>
           <Route path="/" element={<Overview />} />
+          <Route path="/team-performance" element={<TeamDashboard />} />
           <Route path="/trends" element={<Trends />} />
           <Route path="/payment-mode" element={<PaymentMode />} />
           <Route path="/campaigns" element={<Campaigns />} />
