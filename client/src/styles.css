@@ -579,3 +579,6 @@ tr.click { cursor: pointer; } tr.click:hover td { background: #f8f9f6; }
 .sd-rename { font: inherit; font-weight: 700; color: inherit; width: 11ch; min-width: 6ch; max-width: 26ch; field-sizing: content; padding: 1px 6px; border: 1px dashed var(--ink-3); border-radius: 6px; background: transparent; }
 .sd-rename:hover { background: var(--line-2); } .sd-rename:focus { background: var(--surface); border-style: solid; border-color: var(--accent); outline: none; }
 h2.sd-rowname .sd-rename { font-size: 16px; width: 16ch; }
+
+/* task card: the phone number stays on one line (no "Call" word) */
+.sd-actions .sd-call { flex: 1 1 auto; white-space: nowrap; }
