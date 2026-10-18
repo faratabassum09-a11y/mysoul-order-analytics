@@ -12,11 +12,15 @@ const DQ_STAGES = [
   ['handover', 'stepHandover', 'Counted from when the order was packed. DONE opens the form with the photos of the manifest; the order then moves to In-transit orders.', true],
 ];
 
-const NumRow = ({ label, hint, value, onChange, unit, step = 'any' }) => (
-  <label className="sd-set-row">
-    <span><b>{label}</b><small>{hint}</small></span>
-    <span className="sd-num"><input type="number" min="0" step={step} value={value} onChange={(e) => onChange(e.target.value)} /><em>{unit}</em></span>
-  </label>
+// nameKey: this row's name can be changed right here (Settings is admin-only, on the screen and on the server).
+const NameEdit = ({ k, def, names, setName }) => (
+  <input type="text" className="sd-rename" maxLength={90} value={names[k] === undefined ? def : names[k]} placeholder={def} onChange={(e) => setName(k, e.target.value)} onBlur={(e) => { if (!e.target.value.trim()) setName(k, undefined); }} aria-label={`Name for ${def}`} title="Click to rename" />
+);
+const NumRow = ({ label, hint, value, onChange, unit, step = 'any', rename }) => (
+  <div className="sd-set-row">
+    <span>{rename ? <b className="sd-rowname"><NameEdit {...rename} /> <i>is due</i></b> : <b>{label}</b>}<small>{hint}</small></span>
+    <span className="sd-num"><input type="number" min="0" step={step} value={value} onChange={(e) => onChange(e.target.value)} aria-label={`${label || 'Follow-up'} (${unit})`} /><em>{unit}</em></span>
+  </div>
 );
 
 // One input per renameable name. Left empty (or equal to the original) it goes back to the original.
@@ -76,7 +80,9 @@ export default function DeskSettings() {
   };
   const [h1, h2, h3] = f.confirmHours.map(Number); const [p1, p2, p3] = f.pendingHours.map(Number);
   const when = (h) => (h === 0 ? 'straight away' : `${h} h`);
-  const setName = (k, v) => setF((x) => ({ ...x, names: { ...x.names, [k]: v } }));
+  const setName = (k, v) => setF((x) => { const names = { ...x.names }; if (v === undefined) delete names[k]; else names[k] = v; return { ...x, names }; });
+  const def = data.labelDefaults;
+  const rn = (k) => ({ k, def: def[k], names: f.names, setName });
   const webhook = shop && shop.redirectUri ? shop.redirectUri.replace('/api/shopify/callback', '/api/webhook/shopify') : 'https://YOUR-SERVER/api/webhook/shopify';
   return (
     <div className="sd-body sd-settings">
@@ -84,19 +90,19 @@ export default function DeskSettings() {
         <a href="#followups">Follow-ups</a><a href="#assign">Team assignment</a><a href="#names">Names and labels</a><a href="#dispatch">Dispatch</a>
       </nav>
       <div className="sd-set-card" id="followups">
-        <h2>{L('tabConfirm')} follow-ups</h2>
-        <p className="cap">Every new order starts at {L('fu1')}. Press {L('actDnp')} and it waits for the next follow-up. After {L('fu3')} it moves to {L('tabPending')}. All times are in hours.</p>
-        <NumRow label={`${L('fu1')} is due`} hint="After the order is placed. 0 means the moment it arrives." value={f.confirmHours[0]} onChange={(v) => setAt('confirmHours', 0, v)} unit="hours" />
-        <NumRow label={`${L('fu2')} is due`} hint={`After ${L('fu1')} was marked ${L('actDnp')}.`} value={f.confirmHours[1]} onChange={(v) => setAt('confirmHours', 1, v)} unit="hours" />
-        <NumRow label={`${L('fu3')} is due`} hint={`After ${L('fu2')} was marked ${L('actDnp')}.`} value={f.confirmHours[2]} onChange={(v) => setAt('confirmHours', 2, v)} unit="hours" />
+        <h2 className="sd-rowname"><NameEdit {...rn('tabConfirm')} /> <i>follow-ups</i></h2>
+        <p className="cap">Click a name (like FU1) to rename it, then press Save settings. Every new order starts at {L('fu1')}. Press {L('actDnp')} and it waits for the next follow-up. After {L('fu3')} it moves to {L('tabPending')}. All times are in hours.</p>
+        <NumRow label={`${L('fu1')} is due`} rename={rn('fu1')} hint="After the order is placed. 0 means the moment it arrives." value={f.confirmHours[0]} onChange={(v) => setAt('confirmHours', 0, v)} unit="hours" />
+        <NumRow label={`${L('fu2')} is due`} rename={rn('fu2')} hint={`After ${L('fu1')} was marked ${L('actDnp')}.`} value={f.confirmHours[1]} onChange={(v) => setAt('confirmHours', 1, v)} unit="hours" />
+        <NumRow label={`${L('fu3')} is due`} rename={rn('fu3')} hint={`After ${L('fu2')} was marked ${L('actDnp')}.`} value={f.confirmHours[2]} onChange={(v) => setAt('confirmHours', 2, v)} unit="hours" />
         <p className="sd-sum">An order placed at 10:00 is called {when(h1)} after it arrives, again {when(h2)} after the first {L('actDnp')}, and a third time {when(h3)} after the second.</p>
       </div>
       <div className="sd-set-card">
-        <h2>{L('tabPending')} follow-ups</h2>
+        <h2 className="sd-rowname"><NameEdit {...rn('tabPending')} /> <i>follow-ups</i></h2>
         <p className="cap">Also in hours, and counted the same way as above: each follow-up is due this many hours after the one before it was marked {L('actDnp')}. For example 48, 24, 24 means the first call two days after the order moved here, then a day later, then a day later. A {L('actDnp')} on {L('day3')} cancels the order automatically and moves it to {L('tabCancelled')}.</p>
-        <NumRow label={`${L('day1')} is due`} hint={`After it moved to ${L('tabPending')} (the last ${L('fu3')} ${L('actDnp')}).`} value={f.pendingHours[0]} onChange={(v) => setAt('pendingHours', 0, v)} unit="hours" />
-        <NumRow label={`${L('day2')} is due`} hint={`After ${L('day1')} was marked ${L('actDnp')}.`} value={f.pendingHours[1]} onChange={(v) => setAt('pendingHours', 1, v)} unit="hours" />
-        <NumRow label={`${L('day3')} is due`} hint={`After ${L('day2')} was marked ${L('actDnp')}.`} value={f.pendingHours[2]} onChange={(v) => setAt('pendingHours', 2, v)} unit="hours" />
+        <NumRow label={`${L('day1')} is due`} rename={rn('day1')} hint={`After it moved to ${L('tabPending')} (the last ${L('fu3')} ${L('actDnp')}).`} value={f.pendingHours[0]} onChange={(v) => setAt('pendingHours', 0, v)} unit="hours" />
+        <NumRow label={`${L('day2')} is due`} rename={rn('day2')} hint={`After ${L('day1')} was marked ${L('actDnp')}.`} value={f.pendingHours[1]} onChange={(v) => setAt('pendingHours', 1, v)} unit="hours" />
+        <NumRow label={`${L('day3')} is due`} rename={rn('day3')} hint={`After ${L('day2')} was marked ${L('actDnp')}.`} value={f.pendingHours[2]} onChange={(v) => setAt('pendingHours', 2, v)} unit="hours" />
         <p className="sd-sum">Auto-cancel happens after the last call gets no answer: about {(p1 || 0) + (p2 || 0) + (p3 || 0)} hours after the order moved to {L('tabPending')} if every call is answered on time with {L('actDnp')}.</p>
       </div>
       <AssignSettings />

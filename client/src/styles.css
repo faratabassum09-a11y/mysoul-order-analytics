@@ -573,3 +573,9 @@ tr.click { cursor: pointer; } tr.click:hover td { background: #f8f9f6; }
 .tp-tables { display: grid; gap: 4px; margin-top: 22px; }
 .sd-kpi .l .chip { flex: none; align-self: flex-start; }
 .tp-kpi .l span { min-width: 0; }
+
+/* click-to-rename names on the follow-up settings cards */
+.sd-rowname { display: inline-flex; align-items: baseline; gap: 6px; flex-wrap: wrap; font-weight: 700; } .sd-rowname i { font-style: normal; font-weight: 700; }
+.sd-rename { font: inherit; font-weight: 700; color: inherit; width: 11ch; min-width: 6ch; max-width: 26ch; field-sizing: content; padding: 1px 6px; border: 1px dashed var(--ink-3); border-radius: 6px; background: transparent; }
+.sd-rename:hover { background: var(--line-2); } .sd-rename:focus { background: var(--surface); border-style: solid; border-color: var(--accent); outline: none; }
+h2.sd-rowname .sd-rename { font-size: 16px; width: 16ch; }
