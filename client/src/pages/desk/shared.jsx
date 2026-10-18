@@ -319,7 +319,7 @@ export function QueueCard({ o, now, offset, canAct, onUpdate, onOpen, assign = n
       {o.lastAction && <div className="sd-foot"><span title={fmtWhen(o.lastAction.at)}>Last: {o.lastAction.label}</span></div>}
       {assign && <AssigneeRow o={o} {...assign} />}
       <div className="sd-actions">
-        {o.phone ? <a className="btn sd-call" href={`tel:${o.phone}`}><span aria-hidden="true">☎</span> {L('btnCall')} {fmtPhone(o.phone)}</a> : <span className="btn ghost" aria-disabled="true">No phone number</span>}
+        {o.phone ? <a className="btn sd-call" href={`tel:${o.phone}`} aria-label={`${L('btnCall')} ${fmtPhone(o.phone)}`}><span aria-hidden="true">☎</span> {fmtPhone(o.phone)}</a> : <span className="btn ghost" aria-disabled="true">No phone number</span>}
         {canAct && <button className="btn sd-update" onClick={() => onUpdate(o)}>{L('btnUpdate')}</button>}
       </div>
     </article>
