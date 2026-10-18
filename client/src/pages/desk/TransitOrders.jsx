@@ -4,7 +4,7 @@ import { Loading } from '../../components.jsx';
 import { useToast } from '../../deskUi.jsx';
 import { fmtWhen, useAutoRefresh } from '../../flowUi.js';
 import { inr } from '../../format.js';
-import { Empty, Lightbox, OrderDrawer, ProofImg, fmtPhone, notifyDesk, useDebounced, usePager } from './shared.jsx';
+import { Empty, OrderDrawer, fmtPhone, notifyDesk, useDebounced, usePager } from './shared.jsx';
 
 // Shipway groups -> the tag colours the Orders screen already uses
 const TAG = { delivered: 'Delivered', transit: 'In', ndr: 'Pending', rto: 'RTO' };
@@ -19,7 +19,7 @@ export default function TransitOrders() {
   useAutoRefresh(reload, 30);
   useEffect(() => { const on = () => reload(); window.addEventListener('desk-refresh', on); return () => window.removeEventListener('desk-refresh', on); }, []); // eslint-disable-line react-hooks/exhaustive-deps
   const [busy, setBusy] = useState(false); const [toast, show] = useToast();
-  const [open, setOpen] = useState(null); const [look, setLook] = useState(null);
+  const [open, setOpen] = useState(null);
   const items = data ? data.items : [];
   const c = data && data.counts;
   const pages = data ? Math.max(1, Math.ceil(data.total / PAGE)) : 1;
@@ -54,7 +54,7 @@ export default function TransitOrders() {
           : (
             <>
               <div className="tablewrap"><table className="sd-table">
-                <thead><tr><th>Order</th><th>Customer</th><th>AWB / courier</th><th>Handed over</th><th>Shipway status</th><th>Status updated</th><th className="num">Days</th><th className="num">Collect</th><th>Proof</th></tr></thead>
+                <thead><tr><th>Order</th><th>Customer</th><th>AWB / courier</th><th>Handed over</th><th>Shipway status</th><th>Status updated</th><th className="num">Days</th><th className="num">Collect</th></tr></thead>
                 <tbody>{items.map((o) => (
                   <tr key={o.orderId} className="click" onClick={() => setOpen(o.orderId)} tabIndex={0} onKeyDown={(e) => e.key === 'Enter' && setOpen(o.orderId)}>
                     <td><b>{o.orderName}</b></td>
@@ -65,7 +65,6 @@ export default function TransitOrders() {
                     <td>{o.shipway ? fmtWhen(o.shipway.statusAt || o.shipway.checkedAt) : '—'}{o.shipway && o.shipway.checkedAt && <div className="muted">checked {fmtWhen(o.shipway.checkedAt)}</div>}</td>
                     <td className="num">{o.days == null ? '—' : o.days}</td>
                     <td className="num">{o.collect > 0 ? inr(o.collect) : 'Paid'}</td>
-                    <td onClick={(e) => e.stopPropagation()}>{o.manifestId ? <ProofImg id={o.manifestId} alt="Photo of the manifest" onOpen={(src, title) => setLook({ src, title })} /> : <span className="muted">—</span>}</td>
                   </tr>))}</tbody>
               </table></div>
               {data.total > PAGE && <div className="pager"><button className="btn ghost" disabled={pager.page <= 1} onClick={() => pager.setPage(pager.page - 1)}>Previous</button><span>Page {pager.page} of {pages}</span><button className="btn ghost" disabled={pager.page >= pages} onClick={() => pager.setPage(pager.page + 1)}>Next</button></div>}
@@ -73,7 +72,6 @@ export default function TransitOrders() {
           ))}
       </Loading>
       {open && <OrderDrawer orderId={open} onClose={() => setOpen(null)} />}
-      {look && <Lightbox src={look.src} title={look.title} onClose={() => setLook(null)} />}
       {toast}
     </section>
   );
