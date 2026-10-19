@@ -20,6 +20,16 @@ export function duration(ms) {
   return h ? `${h}h ${p2(m % 60)}m` : `${m}m`;
 }
 
+// "2 min" / "3 hr" / "2 days": one unit, rounded down. Used for "Due 2 min ago" style labels.
+export function shortSpan(ms) {
+  const m = Math.max(0, Math.floor(ms / 60000));
+  if (m < 60) return `${m} min`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h} hr`;
+  const d = Math.floor(h / 24);
+  return `${d} ${d === 1 ? 'day' : 'days'}`;
+}
+
 export const fmtWhen = (d) => (d ? new Date(d).toLocaleString('en-IN', { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit', hour12: true, timeZone: 'Asia/Kolkata' }) : '—');
 export const fmtTime = (d) => (d ? new Date(d).toLocaleTimeString('en-IN', { hour: 'numeric', minute: '2-digit', hour12: true, timeZone: 'Asia/Kolkata' }) : '—');
 export const grams = (g) => (g == null ? '—' : g >= 1000 ? `${(g / 1000).toFixed(g % 1000 === 0 ? 0 : 2)} kg` : `${g} g`);
