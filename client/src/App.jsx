@@ -114,6 +114,7 @@ function StaffShell({ user }) {
           <Route path="/confirm-queue" element={<ConfirmQueue />} />
           <Route path="/dispatch-desk" element={<DispatchDesk />} />
           <Route path="/shopify-desk/*" element={<ShopifyDesk />} />
+          <Route path="/team-performance" element={<TeamDashboard />} />
           <Route path="/ndr" element={<NdrPage />} />
           <Route path="/rto" element={<RtoPage />} />
           <Route path="/weight-discrepancy" element={<WeightPage />} />
@@ -124,6 +125,7 @@ function StaffShell({ user }) {
         <NavLink to="/confirm-queue" className={({ isActive }) => (isActive ? 'active' : '')}>Confirm queue</NavLink>
         <NavLink to="/dispatch-desk" className={({ isActive }) => (isActive ? 'active' : '')}>Dispatch desk</NavLink>
         <NavLink to={deskHome(user)} className={({ isActive }) => (isActive ? 'active' : '')}>Shopify desk</NavLink>
+        <NavLink to="/team-performance" className={({ isActive }) => (isActive ? 'active' : '')}>My performance</NavLink>
         {user.role === 'confirmation' && <NavLink to="/ndr" className={({ isActive }) => (isActive ? 'active' : '')}>NDR</NavLink>}
         {user.role === 'packing' && <NavLink to="/rto" className={({ isActive }) => (isActive ? 'active' : '')}>RTO</NavLink>}
         {user.role === 'packing' && <NavLink to="/weight-discrepancy" className={({ isActive }) => (isActive ? 'active' : '')}>Weight</NavLink>}

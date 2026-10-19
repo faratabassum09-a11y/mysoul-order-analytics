@@ -5,6 +5,7 @@ import { useApi } from '../api.js';
 import { DeltaChip, Loading } from '../components.jsx';
 import { ROLE_LABEL, duration, fmtTime, fmtWhen, useAutoRefresh } from '../flowUi.js';
 import { inr, int, pct } from '../format.js';
+import { useStaff } from '../staff.jsx';
 
 // ---------------------------------------------------------------- filters: quick buttons + a date picker (this page keeps its own, so Overview's choice is not disturbed)
 const PRESETS = [['today', 'Today'], ['yesterday', 'Yesterday'], ['this_week', 'This week'], ['last_week', 'Last week'], ['this_month', 'This month']];
@@ -117,16 +118,16 @@ function ScoreBar({ score, grade }) {
   );
 }
 
-function Scorecard({ data, compareLabel }) {
+function Scorecard({ data, compareLabel, mine }) {
   const tt = data.team.tasks; const tp = data.team.tasksPrev;
   const rows = data.people.filter((p) => p.tasks.due > 0 || p.tasks.assigned > 0 || p.tasks.toDo > 0 || (p.active && p.role !== 'admin'))
     .sort((a, b) => (b.tasks.score ?? -1) - (a.tasks.score ?? -1) || b.tasks.due - a.tasks.due || a.name.localeCompare(b.name));
   return (
     <>
-      <h2 className="sd-h2">Task scorecard: are they doing their work on time?</h2>
+      <h2 className="sd-h2">{mine ? 'Your task scorecard: are you doing your work on time?' : 'Task scorecard: are they doing their work on time?'}</h2>
       <p className="cap">Every follow-up call (FU1–FU3, Day 1–3) and every dispatch step (packing slip, packed, handover) has a deadline. A task counts here when its deadline falls in the period you picked.</p>
       <div className="sd-kpis tp-kpis">
-        <Kpi label="Team score" value={tt.score == null ? '—' : `${tt.score}/100`} sub={<Grade g={tt.grade} />} tone={tt.grade === 'excellent' || tt.grade === 'good' ? 'good' : tt.grade === 'none' ? '' : 'bad'} chip={tp && tp.score != null && tt.score != null ? <DeltaChip type="count" cur={tt.score} prev={tp.score} up="good" /> : null} hint={`Done on time earns 1 point, done late half a point, not done 0. ${compareLabel}`} />
+        <Kpi label={mine ? 'Your score' : 'Team score'} value={tt.score == null ? '—' : `${tt.score}/100`} sub={<Grade g={tt.grade} />} tone={tt.grade === 'excellent' || tt.grade === 'good' ? 'good' : tt.grade === 'none' ? '' : 'bad'} chip={tp && tp.score != null && tt.score != null ? <DeltaChip type="count" cur={tt.score} prev={tp.score} up="good" /> : null} hint={`Done on time earns 1 point, done late half a point, not done 0. ${compareLabel}`} />
         <Kpi label="Tasks due" value={int(tt.due)} sub={`${int(tt.assigned)} assigned to people in this period`} tone="" chip={tp && <Delta cur={tt.due} prev={tp.due} />} hint="Tasks whose deadline fell in this period" />
         <Kpi label="Done on time" value={int(tt.onTime)} sub={tt.due ? `${pct(tt.onTimeRate.v, 0)} of tasks due` : 'Nothing was due'} tone="good" chip={tp && tp.due > 0 ? <DeltaChip type="pct" cur={tt.onTimeRate} prev={tp.onTimeRate} up="good" /> : null} hint="Finished before the task turned overdue (2 hours after its deadline for calls)" />
         <Kpi label="Done late" value={int(tt.late)} sub="finished after it turned overdue" tone="warn" hint="Completed, but after the deadline and grace time" />
@@ -170,6 +171,9 @@ function Scorecard({ data, compareLabel }) {
 
 // ---------------------------------------------------------------- the page
 export default function TeamDashboard() {
+  const { user } = useStaff();
+  const mine = !!user && user.role !== 'admin'; // confirmation / packing logins: the server sends only their own numbers
+  const myRole = user && user.role;
   const f = useTeamFilters();
   const { data, error, loading, reload } = useApi('/desk/team-performance', f.params, f.ready);
   const [open, setOpen] = useState(null);
@@ -181,6 +185,8 @@ export default function TeamDashboard() {
   const maxTotal = data ? Math.max(1, ...data.people.map((p) => p.total)) : 1;
   const calls = data ? data.people.filter((p) => p.calls > 0 || p.role === 'confirmation') : [];
   const packers = data ? data.people.filter((p) => p.dispatchWork > 0 || p.role === 'packing') : [];
+  const showCalls = !mine || myRole === 'confirmation';
+  const showDispatch = !mine || myRole === 'packing';
   const hourly = data ? data.hours.map((n, h) => ({ label: `${((h + 11) % 12) + 1}${h < 12 ? 'am' : 'pm'}`, n })) : [];
   const compareLabel = data && data.range.prev ? `vs ${data.range.prev.start === data.range.prev.end ? data.range.prev.start : `${data.range.prev.start} to ${data.range.prev.end}`}` : '';
 
@@ -188,25 +194,25 @@ export default function TeamDashboard() {
     <>
       <FilterBar f={f} range={data && data.range} updated={stamp} onRefresh={reload} busy={loading && !!data} />
       <div className="page tp-page">
-        <h1>Team performance</h1>
-        <p className="lede">How the team is doing: first, whether tasks are done on time, then the work volume. Every call, confirmation, packing slip, pack and courier handover, counted on the day it was done. Includes the <Link to="/shopify-desk">Shopify desk</Link> and the older sheet-based queues. Click a person to see their detail.</p>
+        <h1>{mine ? 'My performance' : 'Team performance'}</h1>
+        {mine ? <p className="lede">How you are doing: first, whether your tasks are done on time, then your work volume. Only your own numbers are shown here.</p> : <p className="lede">How the team is doing: first, whether tasks are done on time, then the work volume. Every call, confirmation, packing slip, pack and courier handover, counted on the day it was done. Includes the <Link to="/shopify-desk">Shopify desk</Link> and the older sheet-based queues. Click a person to see their detail.</p>}
         {!f.ready && <div className="banner">Pick both a “From” and a “To” date (the “To” date cannot be before “From”).</div>}
         <Loading error={error} loading={(loading && !data) || !f.ready}>
           {data && (
             <>
-              {t.total === 0 && <div className="banner">No team activity in this period yet. Pick another day, or check back once the team starts working.</div>}
+              {t.total === 0 && <div className="banner">{mine ? 'You have no activity in this period yet. Pick another day.' : 'No team activity in this period yet. Pick another day, or check back once the team starts working.'}</div>}
 
-              <Scorecard data={data} compareLabel={compareLabel} />
+              <Scorecard data={data} compareLabel={compareLabel} mine={mine} />
 
               <h2 className="sd-h2">Work volume</h2>
               <div className="sd-kpis tp-kpis">
-                <Kpi label="Total actions" value={int(t.total)} sub={`${int(t.calls)} calls · ${int(t.dispatchWork)} dispatch steps`} tone="" chip={pv && <Delta cur={t.total} prev={pv.total} />} hint={`All calls and dispatch steps by the team ${compareLabel}`} />
-                <Kpi label="Orders won" value={int(t.wins)} sub={`${inr(t.valueWon)} order value${t.partial ? ` · ${int(t.partial)} partial` : ''}`} tone="good" chip={pv && <Delta cur={t.wins} prev={pv.wins} />} hint="Confirmed plus partial-paid orders" />
-                <Kpi label="Win rate" value={pct(t.winRate.v)} sub={t.winRate.d ? `${int(t.winRate.n)} of ${int(t.winRate.d)} decisions` : 'No decisions yet'} tone="good" chip={pv && <DeltaChip type="pct" cur={t.winRate} prev={pv.winRate} up="good" />} hint="Of the orders a person finally decided (confirmed, partial or cancelled), the share that were won" />
-                <Kpi label="Time to decide" value={ms(t.avgDecisionMs)} sub="Order placed to first decision" tone="warn" chip={pv && pv.avgDecisionMs != null && t.avgDecisionMs != null ? <DeltaChip type="count" cur={t.avgDecisionMs} prev={pv.avgDecisionMs} up="bad" /> : null} hint="Average, for orders decided in this period" />
-                <Kpi label="Handed to courier" value={int(t.handover)} sub={`${int(t.packed)} packed · ${int(t.slip)} slips`} tone="violet" chip={pv && <Delta cur={t.handover} prev={pv.handover} />} />
-                <Kpi label="Dispatch on time" value={pct(t.onTime.v, 0)} sub={t.onTime.d ? `${int(t.onTime.n)} of ${int(t.onTime.d)} steps · ${int(t.late)} late` : 'No timed steps yet'} tone={t.late ? 'bad' : 'good'} chip={pv && <DeltaChip type="pct" cur={t.onTime} prev={pv.onTime} up="good" />} hint="Packing slip, packed and handover steps finished before their deadline" />
-                <Kpi label="Team active" value={`${t.active} of ${t.members}`} sub="members who did any work" hint="Active confirmation and packing team members who did at least one action" />
+                <Kpi label="Total actions" value={int(t.total)} sub={mine ? (showCalls ? `${int(t.calls)} calls` : `${int(t.dispatchWork)} dispatch steps`) : `${int(t.calls)} calls · ${int(t.dispatchWork)} dispatch steps`} tone="" chip={pv && <Delta cur={t.total} prev={pv.total} />} hint={`All calls and dispatch steps by the team ${compareLabel}`} />
+                {showCalls && <Kpi label="Orders won" value={int(t.wins)} sub={`${inr(t.valueWon)} order value${t.partial ? ` · ${int(t.partial)} partial` : ''}`} tone="good" chip={pv && <Delta cur={t.wins} prev={pv.wins} />} hint="Confirmed plus partial-paid orders" />}
+                {showCalls && <Kpi label="Win rate" value={pct(t.winRate.v)} sub={t.winRate.d ? `${int(t.winRate.n)} of ${int(t.winRate.d)} decisions` : 'No decisions yet'} tone="good" chip={pv && <DeltaChip type="pct" cur={t.winRate} prev={pv.winRate} up="good" />} hint="Of the orders a person finally decided (confirmed, partial or cancelled), the share that were won" />}
+                {showCalls && <Kpi label="Time to decide" value={ms(t.avgDecisionMs)} sub="Order placed to first decision" tone="warn" chip={pv && pv.avgDecisionMs != null && t.avgDecisionMs != null ? <DeltaChip type="count" cur={t.avgDecisionMs} prev={pv.avgDecisionMs} up="bad" /> : null} hint="Average, for orders decided in this period" />}
+                {showDispatch && <Kpi label="Handed to courier" value={int(t.handover)} sub={`${int(t.packed)} packed · ${int(t.slip)} slips`} tone="violet" chip={pv && <Delta cur={t.handover} prev={pv.handover} />} />}
+                {showDispatch && <Kpi label="Dispatch on time" value={pct(t.onTime.v, 0)} sub={t.onTime.d ? `${int(t.onTime.n)} of ${int(t.onTime.d)} steps · ${int(t.late)} late` : 'No timed steps yet'} tone={t.late ? 'bad' : 'good'} chip={pv && <DeltaChip type="pct" cur={t.onTime} prev={pv.onTime} up="good" />} hint="Packing slip, packed and handover steps finished before their deadline" />}
+                {!mine && <Kpi label="Team active" value={`${t.active} of ${t.members}`} sub="members who did any work" hint="Active confirmation and packing team members who did at least one action" />}
               </div>
 
               {(data.attention.length > 0 || data.idle.length > 0) && (
@@ -214,7 +220,7 @@ export default function TeamDashboard() {
                   {data.attention.length > 0 && (
                     <div className="bad">
                       <b>Needs attention now</b>
-                      <span>{data.attention.map((a) => `${a.name}: ${a.overdue} overdue of ${a.assigned} held`).join(' · ')}</span>
+                      <span>{mine ? data.attention.map((a) => `You have ${a.overdue} overdue of ${a.assigned} orders you hold`).join(' · ') : data.attention.map((a) => `${a.name}: ${a.overdue} overdue of ${a.assigned} held`).join(' · ')}</span>
                     </div>
                   )}
                   {data.idle.length > 0 && t.total > 0 && (
@@ -257,7 +263,7 @@ export default function TeamDashboard() {
                   </ResponsiveContainer></div>
                 </div>
                 <div>
-                  <h2 className="sd-h2" style={{ marginTop: 0 }}>When the team works</h2>
+                  <h2 className="sd-h2" style={{ marginTop: 0 }}>{mine ? 'When you work' : 'When the team works'}</h2>
                   <div className="card chart"><ResponsiveContainer width="100%" height="100%">
                     <BarChart data={hourly} margin={{ top: 8, right: 8, left: -12, bottom: 0 }}>
                       <CartesianGrid vertical={false} stroke="#e4e7e1" />
@@ -270,13 +276,13 @@ export default function TeamDashboard() {
                 </div>
               </div>
 
-              <h2 className="sd-h2">Everyone, ranked by work done</h2>
+              <h2 className="sd-h2">{mine ? 'Your activity' : 'Everyone, ranked by work done'}</h2>
               <p className="cap">{compareLabel ? `Arrows compare each person with ${compareLabel.replace('vs ', '')}. ` : ''}Win rate = orders won ÷ orders they finally decided. Times are in IST.</p>
               <div className="tp-board">
                 {data.people.map((p, i) => (
                   <div key={p.id} className={`tp-row ${open === p.id ? 'open' : ''} ${p.total === 0 ? 'zero' : ''}`}>
                     <button className="tp-line" onClick={() => setOpen(open === p.id ? null : p.id)} aria-expanded={open === p.id}>
-                      <span className="rank">{p.total > 0 ? i + 1 : '–'}</span>
+                      <span className="rank">{mine ? '' : p.total > 0 ? i + 1 : '–'}</span>
                       <span className="who"><Avatar p={p} /><span><b>{p.name}</b><Role r={p.role} /></span></span>
                       <span className="bar" title={`${p.total} actions`}>
                         <span className="track"><i style={{ width: `${(p.total / maxTotal) * 100}%`, background: hueOf(p.id) }} /></span>
@@ -292,12 +298,12 @@ export default function TeamDashboard() {
                     {open === p.id && <PersonDetail p={p} trend={data.trend} bucket={data.bucket} />}
                   </div>
                 ))}
-                {data.people.length === 0 && <div className="card muted">No team members yet. Add people under <Link to="/settings">Settings</Link>.</div>}
+                {data.people.length === 0 && <div className="card muted">{mine ? 'Nothing to show yet.' : <>No team members yet. Add people under <Link to="/settings">Settings</Link>.</>}</div>}
               </div>
 
               <div className="tp-tables">
-                <div>
-                  <h2 className="sd-h2" style={{ marginTop: 0 }}>Confirmation team</h2>
+                {showCalls && <div>
+                  <h2 className="sd-h2" style={{ marginTop: 0 }}>{mine ? 'Your calls' : 'Confirmation team'}</h2>
                   <p className="cap">The people who call customers and decide orders.</p>
                   <div className="tablewrap"><table className="sd-table">
                     <thead><tr><th>Person</th><th className="num">Calls</th><th className="num">Confirmed</th><th className="num">Partial</th><th className="num">Cancelled</th><th className="num">No answer</th><th className="num">Win rate</th><th className="num">Avg decide</th><th className="num">Value won</th></tr></thead>
@@ -309,9 +315,9 @@ export default function TeamDashboard() {
                       {calls.length > 1 && <tr className="tp-total"><td><b>Team</b></td><td className="num">{int(t.calls)}</td><td className="num">{int(t.confirmed)}</td><td className="num">{int(t.partial)}</td><td className="num">{int(t.cancelled)}</td><td className="num">{int(t.dnp)}</td><td className="num">{t.winRate.d ? pct(t.winRate.v, 0) : '—'}</td><td className="num">{ms(t.avgDecisionMs)}</td><td className="num">{inr(t.valueWon)}</td></tr>}
                     </tbody>
                   </table></div>
-                </div>
-                <div>
-                  <h2 className="sd-h2" style={{ marginTop: 0 }}>Packing team</h2>
+                </div>}
+                {showDispatch && <div>
+                  <h2 className="sd-h2" style={{ marginTop: 0 }}>{mine ? 'Your dispatch work' : 'Packing team'}</h2>
                   <p className="cap">Packing slip, then packed with photo, then handed to the courier.</p>
                   <div className="tablewrap"><table className="sd-table">
                     <thead><tr><th>Person</th><th className="num">Slips</th><th className="num">Packed</th><th className="num">Handed over</th><th className="num">On time</th><th className="num">Late</th></tr></thead>
@@ -323,21 +329,21 @@ export default function TeamDashboard() {
                       {packers.length > 1 && <tr className="tp-total"><td><b>Team</b></td><td className="num">{int(t.slip)}</td><td className="num">{int(t.packed)}</td><td className="num">{int(t.handover)}</td><td className="num">{t.onTime.d ? pct(t.onTime.v, 0) : '—'}</td><td className="num">{int(t.late)}</td></tr>}
                     </tbody>
                   </table></div>
-                </div>
+                </div>}
               </div>
 
-              <h2 className="sd-h2">Work waiting right now</h2>
-              <p className="cap">Live: not limited to the period above. Orders still open and who is holding them.</p>
+              <h2 className="sd-h2">{mine ? 'Your work waiting right now' : 'Work waiting right now'}</h2>
+              <p className="cap">Live: not limited to the period above. {mine ? 'Orders you are holding that are still open.' : 'Orders still open and who is holding them.'}</p>
               <div className="tp-now">
-                <div><b>{int(data.workload.open)}</b><span>open orders</span></div>
+                <div><b>{int(data.workload.open)}</b><span>{mine ? 'open orders with you' : 'open orders'}</span></div>
                 <div className={data.workload.overdue ? 'bad' : ''}><b>{int(data.workload.overdue)}</b><span>overdue</span></div>
-                <div className={data.workload.unassigned ? 'hot' : ''}><b>{int(data.workload.unassigned)}</b><span>held by nobody</span></div>
+                {!mine && <div className={data.workload.unassigned ? 'hot' : ''}><b>{int(data.workload.unassigned)}</b><span>held by nobody</span></div>}
               </div>
               <div className="tablewrap" style={{ marginTop: 12 }}><table className="sd-table">
                 <thead><tr><th>Person</th><th>Team</th><th className="num">To confirm</th><th className="num">Pending</th><th className="num">To dispatch</th><th className="num">Overdue</th></tr></thead>
                 <tbody>
                   {data.people.filter((p) => p.open.assigned > 0).length === 0
-                    ? <tr><td colSpan={6} className="muted">Nothing is assigned to anyone right now. Turn on assignment in the Shopify desk settings to share orders out.</td></tr>
+                    ? <tr><td colSpan={6} className="muted">{mine ? 'Nothing is assigned to you right now.' : 'Nothing is assigned to anyone right now. Turn on assignment in the Shopify desk settings to share orders out.'}</td></tr>
                     : data.people.filter((p) => p.open.assigned > 0).sort((a, b) => b.open.overdue - a.open.overdue || b.open.assigned - a.open.assigned).map((p) => (
                       <tr key={p.id}><td><b>{p.name}</b></td><td>{ROLE_LABEL[p.role] || '—'}</td><td className="num">{int(p.open.confirm)}</td><td className="num">{int(p.open.pending)}</td><td className="num">{int(p.open.dispatch)}</td><td className={`num ${p.open.overdue ? 'bad-text' : ''}`}>{int(p.open.overdue)}</td></tr>
                     ))}
