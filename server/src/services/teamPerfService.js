@@ -6,7 +6,8 @@ const { fmtDate } = require('../lib/istTime');
 const T = require('../lib/teamPerf');
 const desk = require('./deskService');
 
-async function report(q = {}, now = new Date()) {
+// viewer: the signed-in non-admin ({ id, name, role }); null for an admin, who sees everyone.
+async function report(q = {}, now = new Date(), viewer = null) {
   const key = q.window || 'today';
   if (key === 'all_time') throw Object.assign(new Error('Pick a day, a week or a date range (up to a year).'), { status: 400 });
   const w = resolveWindow(key, now, { from: q.from, to: q.to });
@@ -33,7 +34,7 @@ async function report(q = {}, now = new Date()) {
   const out = T.build({
     range: w, prev: w.prev,
     users: users.map((u) => ({ id: String(u._id), name: u.name, role: u.role, active: u.active !== false })),
-    desk: fromDesk, flow: T.fromFlow(flowEvents, flowDecisions), totals, open, dispatchConfig, now,
+    desk: fromDesk, flow: T.fromFlow(flowEvents, flowDecisions), totals, open, dispatchConfig, now, viewer,
   });
   return {
     ...out,

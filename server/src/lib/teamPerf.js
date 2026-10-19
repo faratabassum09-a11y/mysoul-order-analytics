@@ -16,6 +16,8 @@ const KINDS = [...CALL_KINDS, ...DISPATCH_KINDS];
 const MAX_DAYS = 366;
 // A task is "on time" when it is done before it turns overdue. The Shopify desk calls a follow-up overdue 2 hours after it was due, so that is the grace used here.
 const GRACE_MS = 2 * HOUR;
+// Dispatch steps get NO grace: the Dispatch board turns a card red the moment its deadline passes, so the score must agree with the board.
+const graceFor = (stage) => (stage === 'dispatch' ? 0 : GRACE_MS);
 // Score: a task done on time earns 1 point, done late 0.5, not done (missed) 0. Score = points / tasks that were due x 100.
 const LATE_CREDIT = 0.5;
 const gradeOf = (score) => (score == null ? 'none' : score >= 90 ? 'excellent' : score >= 75 ? 'good' : score >= 50 ? 'fair' : 'poor');
@@ -27,7 +29,7 @@ const assignedTo = (label) => { for (const re of ASSIGN_LINES) { const m = re.ex
 function judge(e) {
   if (typeof e.late === 'boolean') return e.late ? 'late' : 'on';
   if (e.due == null) return null;
-  return e.at <= e.due + GRACE_MS ? 'on' : 'late';
+  return e.at <= e.due + (DISPATCH_KINDS.includes(e.kind) ? 0 : GRACE_MS) ? 'on' : 'late';
 }
 
 // Shopify Desk log action -> kind
@@ -55,7 +57,7 @@ function fromDesk(docs, cfg = DK.DEFAULT_CONFIG) {
     const log = [...(d.log || [])].sort((a, b) => new Date(a.at) - new Date(b.at));
     for (const e of log) {
       const at = new Date(e.at).getTime();
-      if (e.action === 'assign') { const who = assignedTo(e.label); if (who) assigns.push({ at, name: who, orderId: d.orderId }); continue; }
+      if (e.action === 'assign') { const who = assignedTo(e.label); if (who) assigns.push({ at, name: who, orderId: d.orderId, stage: e.stage || null }); continue; }
       if (e.action === 'restore') { due = at; continue; }
       const kind = DESK_ACTION[e.action];
       const before = due; // the deadline of the call this entry answers
@@ -187,7 +189,7 @@ function taskBook(events, assigns, open, range, resolve, dispatchConfig, now) {
     if (d.stage === 'dispatch') { const x = DP.dueAt(d, dispatchConfig); due = x ? x.getTime() : null; }
     else if ((d.stage === 'confirm' || d.stage === 'pending') && d.dueAt) due = new Date(d.dueAt).getTime();
     if (due == null || !inRange(due, range)) continue;
-    const bucket = nowMs > due + GRACE_MS ? 'missed' : 'toDo';
+    const bucket = nowMs > due + graceFor(d.stage) ? 'missed' : 'toDo';
     if (d.assignee && d.assignee.id) get(String(d.assignee.id), d.assignee.name)[bucket]++; else nobody[bucket]++;
   }
   return { by, nobody };
@@ -209,9 +211,38 @@ function teamTasks(book) {
   return { assigned: sum('assigned'), due, onTime, late, missed, toDo: sum('toDo') + book.nobody.toDo, unassignedMissed: book.nobody.missed, done: onTime + late, doneRate: ratio(onTime + late, due), onTimeRate: ratio(onTime, due), score, grade: gradeOf(score) };
 }
 
+// ------------------------------------------------------------------------------------------------ restricted view
+// A confirmation or packing login sees the same page as an admin, but only their OWN numbers, and only for their own kind of work.
+// Everything is cut down BEFORE anything is counted, so no other person's name or figure can reach the screen.
+const ROLE_KINDS = { confirmation: CALL_KINDS, packing: DISPATCH_KINDS };
+const ROLE_STAGES = { confirmation: ['confirm', 'pending'], packing: ['dispatch'] };
+function scopeInput(viewer, input) {
+  const resolve = makeResolver(input.users);
+  const mine = (id, name) => resolve(id, name).id === String(viewer.id);
+  const kinds = ROLE_KINDS[viewer.role] || [];          // an unknown role sees nothing
+  const stages = ROLE_STAGES[viewer.role] || [];
+  const me = input.users.find((u) => String(u.id) === String(viewer.id)) || { id: String(viewer.id), name: viewer.name, role: viewer.role, active: true };
+  return {
+    users: [me],
+    desk: {
+      events: input.desk.events.filter((e) => kinds.includes(e.kind) && mine(e.id, e.name)),
+      decisions: viewer.role === 'confirmation' ? input.desk.decisions.filter((x) => mine(x.id, x.name)) : [],
+      assigns: (input.desk.assigns || []).filter((a) => mine(null, a.name) && (!a.stage || stages.includes(a.stage))),
+    },
+    flow: {
+      events: input.flow.events.filter((e) => kinds.includes(e.kind) && mine(e.id, e.name)),
+      decisions: viewer.role === 'confirmation' ? input.flow.decisions.filter((x) => mine(x.id, x.name)) : [],
+      assigns: [],
+    },
+    open: (input.open || []).filter((d) => stages.includes(d.stage) && d.assignee && d.assignee.id && String(d.assignee.id) === String(viewer.id)),
+  };
+}
+
 // ------------------------------------------------------------------------------------------------ the whole report
 // input: { range:{start,end}, prev:{start,end}|null, users, desk:{events,decisions}, flow:{events,decisions}, totals: Map(orderId -> total), open: [DeskOrder], dispatchConfig, now }
-function build(input) {
+function build(rawInput) {
+  const viewer = rawInput.viewer && rawInput.viewer.role !== 'admin' ? rawInput.viewer : null; // admins (no viewer) see everyone
+  const input = viewer ? { ...rawInput, ...scopeInput(viewer, rawInput) } : rawInput;
   const { range, prev, users, totals = new Map(), open = [], dispatchConfig = DP.DEFAULT_DISPATCH_CONFIG, now = new Date() } = input;
   const events = [...input.desk.events, ...input.flow.events];
   const assigns = [...(input.desk.assigns || []), ...(input.flow.assigns || [])];
@@ -230,7 +261,7 @@ function build(input) {
     openTotal++;
     let late = false;
     if (d.stage === 'dispatch') { const due = DP.dueAt(d, dispatchConfig); late = !!due && due.getTime() < now.getTime(); }
-    else if (d.dueAt) late = new Date(d.dueAt).getTime() + 2 * HOUR < now.getTime(); // same "overdue" line the Shopify desk uses
+    else if (d.dueAt) late = new Date(d.dueAt).getTime() + GRACE_MS < now.getTime(); // same "overdue" line the Shopify desk uses
     if (late) overdueTotal++;
     const a = d.assignee && d.assignee.id;
     if (!a) { unassigned++; continue; }
@@ -324,12 +355,13 @@ function build(input) {
   const stuck = people.filter((p) => p.open.overdue > 0).sort((a, b) => b.open.overdue - a.open.overdue);
 
   return {
+    scope: viewer ? { mine: true, role: viewer.role, id: String(viewer.id) } : { mine: false },
     bucket: plan.bucket, team, teamPrev, people, trend, hours,
-    highlights, idle: idle.map((p) => ({ id: p.id, name: p.name, role: p.role })),
+    highlights: viewer ? [] : highlights, idle: viewer ? [] : idle.map((p) => ({ id: p.id, name: p.name, role: p.role })),
     attention: stuck.map((p) => ({ id: p.id, name: p.name, overdue: p.open.overdue, assigned: p.open.assigned })),
     workload: { open: openTotal, overdue: overdueTotal, unassigned },
     activeCount: doers.length,
   };
 }
 
-module.exports = { GRACE_MS, LATE_CREDIT, gradeOf, scoreOf, assignedTo, judge, KINDS, CALL_KINDS, DISPATCH_KINDS, MAX_DAYS, fromDesk, fromFlow, build, bucketPlan, makeResolver, callsOf, dispatchOf, totalOf, ratio };
+module.exports = { GRACE_MS, LATE_CREDIT, gradeOf, scoreOf, assignedTo, judge, scopeInput, KINDS, CALL_KINDS, DISPATCH_KINDS, MAX_DAYS, fromDesk, fromFlow, build, bucketPlan, makeResolver, callsOf, dispatchOf, totalOf, ratio };

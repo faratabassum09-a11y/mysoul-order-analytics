@@ -40,8 +40,11 @@ router.get('/counts', wrap(async (req, res) => res.json(await svc.counts())));
 router.get('/config', wrap(async (req, res) => res.json({ ...(await svc.getConfig()), labelDefaults: D.DEFAULT_LABELS, labelGroups: D.LABEL_GROUPS })));
 router.put('/config', adminOnly, wrap(async (req, res) => res.json({ ...(await svc.saveConfig(req.body || {})), labelDefaults: D.DEFAULT_LABELS, labelGroups: D.LABEL_GROUPS })));
 router.get('/overview', adminOnly, wrap(async (req, res) => res.json(await svc.overview(req.query))));
-// Team performance: what every person did in a window (admin only)
-router.get('/team-performance', adminOnly, wrap(async (req, res) => res.json(await require('../services/teamPerfService').report(req.query))));
+// Team performance. Admins see everyone. Confirmation / packing logins get the same page cut down to their own numbers and their own kind of work (enforced here, not in the browser).
+router.get('/team-performance', wrap(async (req, res) => {
+  const viewer = req.staff.role === 'admin' ? null : { id: String(req.staff.id), name: req.staff.name, role: req.staff.role };
+  res.json(await require('../services/teamPerfService').report(req.query, new Date(), viewer));
+}));
 // ---------------------------------------------------------------- Courier problems: NDR, RTO & returns, weight discrepancy
 const cases = () => require('../services/caseService');
 const C = require('../lib/cases');

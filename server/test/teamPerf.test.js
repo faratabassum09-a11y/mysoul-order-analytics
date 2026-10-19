@@ -208,3 +208,52 @@ test('tasks: a person with nothing due has no score; grades follow the score', (
   assert.equal(T.assignedTo('Re-shared to Meera K by Boss'), 'Meera K');
   assert.equal(T.assignedTo('Ravi took this order'), 'Ravi');
 });
+
+// ---------------------------------------------------------------- Rahul / order #1969 case and restricted logins
+const DP = require('../src/lib/dispatch');
+const mon = { start: at(19, 0), end: at(20, 0) }; // Monday: a working day
+const dispatchOpen = (orderId, assignee, stepAtH, step = 'packed') => ({ orderId, stage: 'dispatch', dq: { step, stepAt: at(19, stepAtH) }, assignee });
+
+test('dispatch: a step past its deadline is DUE and MISSED at once for the person holding it (no 2-hour grace, same as the board)', () => {
+  // step started 08:00, cut-off 12:00; now 12:30 -> the board shows "Overdue 30m"
+  const open = [dispatchOpen(1969, { id: 'u2', name: 'Ravi' }, 8)];
+  const r = run([], { open, now: at(19, 12, 30), range: mon });
+  const p = person(r, 'Ravi');
+  assert.equal(p.tasks.due, 1); assert.equal(p.tasks.missed, 1); assert.equal(p.tasks.toDo, 0); assert.equal(p.tasks.score, 0);
+});
+
+test('dispatch: before the deadline it is only "to do", not due', () => {
+  const open = [dispatchOpen(1969, { id: 'u2', name: 'Ravi' }, 8)];
+  const r = run([], { open, now: at(19, 11, 0), range: mon });
+  const p = person(r, 'Ravi');
+  assert.equal(p.tasks.due, 0); assert.equal(p.tasks.toDo, 1);
+});
+
+test('restricted view: a packing login sees only their own dispatch numbers and nobody else', () => {
+  const dq = { slip: { at: at(19, 9), byName: 'Ravi', byId: 'u2', late: false, dueAt: at(19, 12) } };
+  const other = { slip: { at: at(19, 9), byName: 'Boss', byId: 'u9', late: false, dueAt: at(19, 12) } };
+  const docs = [doc(1, at(18, 8), [], dq), doc(2, at(18, 8), [], other), doc(3, at(19, 8), [entry('Asha', 'u1', 'confirm', at(19, 9))])];
+  const open = [dispatchOpen(10, { id: 'u2', name: 'Ravi' }, 8), dispatchOpen(11, { id: 'u9', name: 'Boss' }, 8), dispatchOpen(12, null, 8)];
+  const r = run(docs, { open, now: at(19, 12, 30), range: mon, viewer: { id: 'u2', name: 'Ravi', role: 'packing' } });
+  assert.deepEqual(r.people.map((p) => p.name), ['Ravi']);
+  assert.equal(r.team.total, 1); assert.equal(r.team.calls, 0);          // Asha's call and Boss's slip are invisible
+  assert.equal(r.team.tasks.due, 2);                                       // slip done on time + the open packed step that is overdue
+  assert.equal(r.team.tasks.missed, 1); assert.equal(r.team.tasks.unassignedMissed, 0);
+  assert.equal(r.workload.open, 1); assert.equal(r.workload.unassigned, 0);
+  assert.deepEqual(r.highlights, []); assert.deepEqual(r.idle, []);
+  assert.equal(r.scope.mine, true);
+});
+
+test('restricted view: a confirmation login sees calls only, never dispatch work', () => {
+  const docs = [doc(1, at(19, 8), [entry('Asha', 'u1', 'confirm', at(19, 9))]), doc(2, at(19, 8), [entry('Ravi', 'u2', 'dnp', at(19, 9))])];
+  const open = [dispatchOpen(10, { id: 'u1', name: 'Asha' }, 8)];
+  const r = run(docs, { open, now: at(19, 12, 30), range: mon, viewer: { id: 'u1', name: 'Asha', role: 'confirmation' } });
+  assert.deepEqual(r.people.map((p) => p.name), ['Asha']);
+  assert.equal(r.team.calls, 1); assert.equal(r.team.dispatchWork, 0);
+  assert.equal(r.workload.open, 0);                                        // a dispatch order is not a confirmation task
+});
+
+test('an admin viewer still sees everyone', () => {
+  const r = run([doc(1, at(18, 8), [entry('Asha', 'u1', 'confirm', at(18, 9))])], { viewer: { id: 'u9', name: 'Boss', role: 'admin' } });
+  assert.ok(r.people.length > 1); assert.equal(r.scope.mine, false);
+});
