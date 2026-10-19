@@ -1,7 +1,7 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { api, deskProofUrl, deskShotUrl, useApi } from '../../api.js';
 import { Sheet } from '../../deskUi.jsx';
-import { compressPhoto, duration, fmtWhen, useNow, useServerOffset } from '../../flowUi.js';
+import { compressPhoto, duration, fmtWhen, shortSpan, useNow, useServerOffset } from '../../flowUi.js';
 import { inr } from '../../format.js';
 import LABEL_FALLBACK from '../../labelDefaults.json';
 
@@ -71,9 +71,10 @@ export function DueChip({ o, now, offset }) {
   if (!o.dueAt) return null;
   const ms = new Date(o.dueAt).getTime() - (now + offset);
   const late = o.stage === 'pending' ? 6 : 2;
-  if (ms > 0) return <span className="sd-due wait" title={`Opens ${fmtWhen(o.dueAt)}`}>Due in {duration(ms)}</span>;
-  if (-ms > late * 3600 * 1000) return <span className="sd-due late" title={`Was due ${fmtWhen(o.dueAt)}`}>Overdue {duration(-ms)}</span>;
-  return <span className="sd-due now" title={`Was due ${fmtWhen(o.dueAt)}`}>Due now</span>;
+  if (ms > 0) return <span className="sd-due wait" title={`Opens ${fmtWhen(o.dueAt)}`}>Due in {shortSpan(ms)}</span>;
+  if (-ms > late * 3600 * 1000) return <span className="sd-due late" title={`Was due ${fmtWhen(o.dueAt)}`}>Overdue {shortSpan(-ms)}</span>;
+  // Just became due (under a minute): "Due now". After that it counts up: "Due 2 min ago", "Due 1 hr ago".
+  return <span className="sd-due now" title={`Was due ${fmtWhen(o.dueAt)}`}>{-ms < 60000 ? 'Due now' : `Due ${shortSpan(-ms)} ago`}</span>;
 }
 
 export function useClock(serverNow) { return { now: useNow(1000), offset: useServerOffset(serverNow) }; }
