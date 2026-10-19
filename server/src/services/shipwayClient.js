@@ -76,7 +76,11 @@ function fromGetOrders(x) {
   const raw = clean(x.shipment_status);
   const code = /^[A-Za-z]{2,6}$/.test(raw) ? raw.toUpperCase() : '';
   const text = clean(x.shipment_status_name) || (last && clean(last.status)) || (!code && raw && raw !== '0' ? raw : '');
+  // every weight or charge field Shipway sent with this order (names are kept as Shipway wrote them)
+  const weight_fields = {};
+  for (const [k, v] of Object.entries(x)) if (/weight|charge|discrepan/i.test(k) && (typeof v === 'number' || typeof v === 'string')) weight_fields[k] = v;
   return {
+    weight_fields,
     current_status_code: code, current_status: text, carrier: clean(x.name) || clean(x.carrier_title), awbno: awb,
     from: clean(x.pickup_address && x.pickup_address.city), to: clean(x.s_city), pickup_date: '', time: last ? clean(last.datetime) : '',
   };

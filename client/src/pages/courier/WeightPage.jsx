@@ -110,7 +110,7 @@ export default function WeightPage() {
   const [toast, show] = useToast();
   useEffect(() => { const on = () => reload(); window.addEventListener('desk-refresh', on); return () => window.removeEventListener('desk-refresh', on); }, []); // eslint-disable-line react-hooks/exhaustive-deps
   return (
-    <CourierPage title="Weight Discrepancy Orders" sub="Orders where the courier charged for a heavier parcel than you declared. Work each one in three steps: review it, submit the request on Shipway, then record the final result."
+    <CourierPage title="Weight Discrepancy Orders" sub="Orders where the courier charged for a heavier parcel than you declared, picked up from Shipway by itself. Work each one in three steps: review it, submit the request on Shipway, then record the final result."
       actions={actor ? <div className="cs-actions"><UploadBar onDone={reload} show={show} /><button className="btn ghost" onClick={() => setAdding(true)}>Add manually</button></div> : null}>
       <div className="sd-stats">
         <Stat label="Open cases" value={data ? int(data.counts.open) : '–'} tone="warn" sub={data ? `${data.counts.byStep.join(' · ')} in the three steps` : ''} />
@@ -129,7 +129,7 @@ export default function WeightPage() {
                   <div key={title} className={`dq-col wd${i + 1}`}>
                     <div className="dq-colhead"><div className="dq-title"><h2>{title}</h2><span className="sd-count">{items.length}</span></div><small>{hint}</small></div>
                     <div className="dq-cards">
-                      {items.length === 0 ? <Empty title="Nothing here">{q ? 'No orders match this.' : i === 0 ? 'Upload the weight discrepancy report from Shipway, or add one manually.' : 'Cards arrive here from the step before.'}</Empty>
+                      {items.length === 0 ? <Empty title="Nothing here">{q ? 'No orders match this.' : i === 0 ? 'When Shipway reports a charged weight above the declared one, the order appears here by itself.' : 'Cards arrive here from the step before.'}</Empty>
                         : items.map((o) => <WCard key={o.case.id} o={o} canAct={actor} onUpdate={setSheet} onOpen={setOpen} />)}
                     </div>
                   </div>

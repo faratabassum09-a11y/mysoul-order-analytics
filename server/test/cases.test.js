@@ -23,7 +23,7 @@ test('NDR: no answer moves FU1 -> FU2 -> FU3 with the set hours, then closes aft
 test('NDR: a call before it is due cannot be logged as no answer, but "wants" / "does not want" always can', () => {
   const c = open({ step: 2, dueAt: new Date(t0.getTime() + 3600e3) });
   assert.throws(() => C.ndrAction(c, 'dnp', '', who, undefined, t0), /FU2 is not due yet/);
-  assert.equal(C.ndrAction(c, 'wants', 'will be home Monday', who, undefined, t0).set.resolution.outcome, 'wants');
+  assert.equal(C.ndrAction(c, 'wants', 'will be home Monday', who, undefined, t0).set.step, 2);
   assert.equal(C.ndrAction(c, 'not_wants', '', who, undefined, t0).set.resolution.outcome, 'not_wants');
 });
 
@@ -34,7 +34,20 @@ test('NDR: notes are kept, trimmed and capped; unknown outcomes and closed cases
   assert.throws(() => C.ndrAction(open({ status: 'resolved' }), 'wants', '', who), /already closed/);
 });
 
-test('NDR: a case closes itself when Shipway shows delivered or RTO, and stays open while still undelivered', () => {
+test('NDR: customer still wants it -> the case goes to FU2 and stays open, from any step', () => {
+  const cfg = { ndrHours: [0, 4, 24] };
+  for (const step of [1, 2, 3]) {
+    const r = C.ndrAction(open({ step }), 'wants', 'call after 6pm', who, cfg, t0);
+    assert.equal(r.set.step, 2); assert.equal(r.set.status, undefined); assert.equal(r.set.resolution, undefined);
+    assert.equal(r.set.dueAt.getTime(), t0.getTime() + 4 * 3600e3);
+    assert.equal(r.set.wants.count, 1); assert.equal(r.set.wants.note, 'call after 6pm');
+    assert.match(r.entries[0].label, /Added to FU2/);
+  }
+  assert.equal(C.ndrAction(open({ step: 2, wants: { count: 1 } }), 'wants', '', who, cfg, t0).set.wants.count, 2);
+});
+
+test('NDR: only Delivered or RTO closes a case; any other Shipway status leaves it open', () => {
+  for (const group of ['transit', 'other', 'cancelled', 'lost', 'reverse']) assert.equal(C.ndrAutoClose(open(), { group, status: 'Out for delivery' }), null);
   assert.equal(C.ndrAutoClose(open(), { group: 'ndr', status: 'Undelivered' }), null);
   assert.equal(C.ndrAutoClose(open(), { group: 'delivered', status: 'Delivered' }).set.resolution.outcome, 'delivered');
   assert.equal(C.ndrAutoClose(open(), { group: 'rto', status: 'RTO in transit' }).set.resolution.outcome, 'rto');
@@ -102,4 +115,22 @@ test('case settings are validated', () => {
   assert.deepEqual(C.normaliseCaseConfig({ ndrHours: [0, 2, 12] }).ndrHours, [0, 2, 12]);
   assert.throws(() => C.normaliseCaseConfig({ ndrHours: [1, 2] }), /three numbers/);
   assert.throws(() => C.normaliseCaseConfig({ ndrHours: [0, -1, 2] }), /follow-up 2/);
+});
+
+test('NDR: cases an old version closed as "Status changed" get the real result, or reopen', () => {
+  const moved = { orderId: 1446, status: 'resolved', step: 2, resolution: { outcome: 'moved', by: 'Shipway' } };
+  assert.equal(C.ndrReclassify(moved, { group: 'delivered', status: 'Delivered' }).set['resolution.outcome'], 'delivered');
+  assert.equal(C.ndrReclassify(moved, { group: 'rto', status: 'RTO in transit' }).set['resolution.outcome'], 'rto');
+  const r = C.ndrReclassify(moved, { group: 'transit', status: 'Out for delivery' }, { ndrHours: [0, 4, 24] }, t0);
+  assert.equal(r.set.status, 'open'); assert.equal(r.set.step, 2); assert.equal(r.set.dueAt.getTime(), t0.getTime() + 4 * 3600e3);
+  assert.equal(C.ndrReclassify(moved, { group: 'ndr', status: 'Undelivered' }), null); // a new NDR is handled by the normal sync
+  assert.equal(C.ndrReclassify({ ...moved, resolution: { outcome: 'wants' } }, { group: 'transit' }), null);
+});
+
+test('weight: Shipway order fields give a case only when charged weight is above declared', () => {
+  assert.deepEqual(C.weightFromShipment({ weight: 500, charged_weight: 1000, extra_charge: '₹60' }), { declaredG: 500, chargedG: 1000, diffG: 500, extraCharge: 60 });
+  assert.equal(C.weightFromShipment({ weight: 500, charged_weight: 500 }), null);
+  assert.equal(C.weightFromShipment({ weight: 500 }), null);
+  assert.equal(C.weightFromShipment({ weight: 0.5, charged_weight: 1 }, { unit: 'kg' }).diffG, 500);
+  assert.equal(C.weightFromShipment(null), null);
 });

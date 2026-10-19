@@ -1,5 +1,5 @@
 // Courier problem cases: NDR follow-ups, RTO & returns, weight discrepancy. Read the rules in lib/cases.js.
-// NDR and RTO fill themselves from the Shipway status the app already fetches (ShipwayShipment). Weight discrepancy comes from an uploaded Shipway report or a manual entry.
+// NDR, RTO and weight discrepancy all fill themselves from what the app already fetches from Shipway (ShipwayShipment). An uploaded Shipway report or a manual entry still works as a fallback for weight.
 const { ShipCase, ShipwayShipment, ShopifyOrder, DeskOrder, Setting } = require('../models');
 const C = require('../lib/cases');
 const { resolveWindow } = require('../lib/windows');
@@ -48,6 +48,7 @@ function person(orderId, maps, conf) {
 const caseOut = (c) => ({
   id: String(c._id), type: c.type, orderId: c.orderId, status: c.status, step: c.step, dueAt: c.dueAt || null, openedAt: c.openedAt, source: c.source,
   awb: c.awb || '', courier: c.courier || '', ndr: c.ndr || null, weight: c.weight || null, requestRef: c.requestRef || '', requestAt: c.requestAt || null,
+  wants: c.wants && c.wants.at ? c.wants : null,
   resolution: c.resolution && c.resolution.outcome ? c.resolution : null, received: c.received && c.received.at ? c.received : null,
   log: (c.log || []).slice(-8),
 });
@@ -86,13 +87,39 @@ async function syncNdr(now = new Date()) {
       if (t) await ShipCase.updateOne({ _id: c._id, rev: c.rev || 0, status: 'open' }, { $set: t.set, $push: { log: { $each: t.entries } }, $inc: { rev: 1 } });
     }
   }
+  // cases an older version closed as "Status changed": Delivered / RTO get their real result, anything else goes back to open
+  const moved = await ShipCase.find({ type: 'ndr', status: 'resolved', 'resolution.outcome': 'moved' }).lean();
+  if (moved.length) {
+    const cur = new Map((await ShipwayShipment.find({ orderId: { $in: moved.map((c) => c.orderId) }, found: true }).select('orderId group status').lean()).map((s) => [s.orderId, s]));
+    for (const c of moved) {
+      const t = C.ndrReclassify(c, cur.get(c.orderId), conf, now);
+      if (t) await ShipCase.updateOne({ _id: c._id, rev: c.rev || 0 }, { $set: t.set, ...(t.entries.length ? { $push: { log: { $each: t.entries } } } : {}), $inc: { rev: 1 } });
+    }
+  }
+  return { added: fresh.length };
+}
+
+// Weight discrepancies Shipway itself reported with the order lookup (ShipwayShipment.weightInfo): one open case per order.
+async function syncWeight(now = new Date()) {
+  const ships = await ShipwayShipment.find({ found: true, 'weightInfo.diffG': { $gt: 0 } }).select('orderId awb carrier weightInfo').lean();
+  if (!ships.length) return { added: 0 };
+  const have = await ShipCase.find({ type: 'weight', orderId: { $in: ships.map((s) => s.orderId) } }).select('orderId weight status').lean();
+  const fresh = [];
+  for (const s of ships) {
+    const w = s.weightInfo;
+    const r = { orderId: s.orderId, awb: s.awb || '', courier: s.carrier || '', declaredG: w.declaredG, chargedG: w.chargedG, diffG: w.diffG, extraCharge: w.extraCharge, raisedAt: null };
+    if (have.some((c) => c.orderId === s.orderId && sameNumbers(c, r))) continue;
+    if (have.some((c) => c.orderId === s.orderId && c.status === 'open')) continue; // already being worked
+    fresh.push(newWeight(r, s.orderId, 'shipway', 'shipway', now));
+  }
+  if (fresh.length) await ShipCase.insertMany(fresh, { ordered: false }).catch((e) => { if (!e.writeErrors && e.code !== 11000) throw e; });
   return { added: fresh.length };
 }
 async function syncIfStale(ms = 30000) {
   if (syncing) return syncing;
   if (Date.now() - lastSync < ms) return null;
   lastSync = Date.now();
-  syncing = syncNdr().catch((e) => console.warn('[cases] NDR sync failed:', e.message)).finally(() => { syncing = null; });
+  syncing = Promise.all([syncNdr(), syncWeight()]).catch((e) => console.warn('[cases] sync failed:', e.message)).finally(() => { syncing = null; });
   return syncing;
 }
 
@@ -212,7 +239,7 @@ async function resolveOrders(rows) {
 const newWeight = (r, orderId, source, batch, now) => ({
   type: 'weight', orderId: orderId || null, status: 'open', step: 1, openedAt: r.raisedAt || now, source, awb: r.awb || '', courier: r.courier || '',
   weight: { declaredG: r.declaredG, chargedG: r.chargedG, diffG: r.diffG, extraCharge: r.extraCharge, raisedAt: r.raisedAt || null, batch },
-  log: [{ at: now, by: source === 'upload' ? 'Shipway report' : 'Manual', byId: 'system', step: 1, action: 'opened', label: `Weight discrepancy ${r.diffG != null ? `${r.diffG > 0 ? '+' : ''}${r.diffG} g` : ''}${r.extraCharge != null ? ` · extra charge ₹${r.extraCharge}` : ''}`.trim(), note: '' }],
+  log: [{ at: now, by: source === 'shipway' ? 'Shipway' : source === 'upload' ? 'Shipway report' : 'Manual', byId: 'system', step: 1, action: 'opened', label: `Weight discrepancy ${r.diffG != null ? `${r.diffG > 0 ? '+' : ''}${r.diffG} g` : ''}${r.extraCharge != null ? ` · extra charge ₹${r.extraCharge}` : ''}`.trim(), note: '' }],
 });
 const sameNumbers = (c, r) => c.weight && c.weight.chargedG === r.chargedG && c.weight.extraCharge === r.extraCharge && c.weight.declaredG === r.declaredG;
 
@@ -321,4 +348,4 @@ function start() {
   setInterval(() => syncIfStale(0), 2 * 60 * 1000);
 }
 
-module.exports = { readSheetFile, getConfig, saveConfig, syncNdr, ndrBoard, ndrSubmit, rtoList, rtoMark, weightImport, weightAdd, weightBoard, weightSubmit, counts, start };
+module.exports = { readSheetFile, getConfig, saveConfig, syncNdr, syncWeight, ndrBoard, ndrSubmit, rtoList, rtoMark, weightImport, weightAdd, weightBoard, weightSubmit, counts, start };

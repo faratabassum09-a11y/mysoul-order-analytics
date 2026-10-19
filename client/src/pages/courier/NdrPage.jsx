@@ -9,7 +9,7 @@ import { DueChip, Empty, LabelsProvider, OrderDrawer, PayTag, fmtPhone, notifyDe
 import { ClosedList, CourierPage, History, NoteField, Stat } from './courierUi.jsx';
 
 const CHOICES = [
-  ['wants', 'Customer still wants it', 'Ask the courier to deliver again.', 'good'],
+  ['wants', 'Customer still wants it', 'Adds the order to FU2. It stays open until Shipway shows Delivered or RTO.', 'good'],
   ['not_wants', 'Customer does not want it', 'Return the parcel to origin (RTO).', 'bad'],
   ['dnp', 'Did not pick up', 'Try again at the next follow-up.', 'warn'],
 ];
@@ -25,7 +25,7 @@ function NdrSheet({ o, now, offset, onClose, onDone, show }) {
     setBusy(true);
     try {
       await api.post(`/desk/ndr/${o.orderId}/submit`, { outcome: choice, note });
-      notifyDesk(); show(choice === 'dnp' ? (c.step < 3 ? `${o.orderName}: no answer saved. Next: ${fu(`FU${c.step + 1}`)}.` : `${o.orderName}: no response after 3 follow-ups. Return it to origin.`) : `${o.orderName}: saved.`); onDone();
+      notifyDesk(); show(choice === 'wants' ? `${o.orderName}: added to ${fu('FU2')}.` : choice === 'dnp' ? (c.step < 3 ? `${o.orderName}: no answer saved. Next: ${fu(`FU${c.step + 1}`)}.` : `${o.orderName}: no response after 3 follow-ups. Return it to origin.`) : `${o.orderName}: saved.`); onDone();
     } catch (e) { show(e.message, 'err'); if (e.status === 409) onDone(); } finally { setBusy(false); }
   };
   return (
@@ -58,6 +58,8 @@ function NdrCard({ o, now, offset, canAct, onUpdate, onOpen }) {
       <div className="sd-who"><b>{o.name || 'No name'}</b>{o.city ? <span className="muted"> · {o.city}</span> : null}</div>
       <div className="sd-line"><span className="sd-amt">{inr(o.collect != null ? o.collect : o.total)}</span><span className="sd-items" title={o.items}>{o.items || 'Items not loaded'}</span></div>
       <div className="cs-reason" title="Latest status from Shipway">{(c.ndr && c.ndr.reason) || 'Undelivered'}</div>
+      {o.shipway && o.shipway.status && o.shipway.status !== (c.ndr && c.ndr.reason) && <div className="cs-reason" title="Shipway status right now">Shipway now: <b>{o.shipway.status}</b></div>}
+      {c.wants && <div className="cs-reason" title={`${c.wants.by}${c.wants.note ? `: ${c.wants.note}` : ''}`}>✓ Customer still wants it{c.wants.count > 1 ? ` (${c.wants.count}×)` : ''}</div>}
       <div className="sd-foot"><span>{c.courier || '—'}{c.awb ? ` · AWB ${c.awb}` : ''}</span></div>
       {lastNote && <p className="sd-note">“{lastNote.note}” <small className="muted">· {lastNote.by}</small></p>}
       <div className="sd-actions">
@@ -86,7 +88,7 @@ function NdrInner() {
   const hint = ['Ask the customer: do you still want this order?', 'Try again, same question.', 'Last try. A no-answer here sends the parcel back to origin.'];
   const names = useMemo(() => ['FU1', 'FU2', 'FU3'], []);
   return (
-    <CourierPage title="Non-Delivery Report (NDR)" sub="Parcels the courier could not deliver, taken from Shipway. Call the customer in three follow-ups to find out if they still want the order.">
+    <CourierPage title="Non-Delivery Report (NDR)" sub="Parcels the courier could not deliver, taken from Shipway. Call the customer in three follow-ups. If they still want it, the order goes to FU2. A case closes only when Shipway shows Delivered or RTO.">
       <div className="sd-stats">
         <Stat label="Open NDRs" value={data ? int(data.counts.open) : '–'} tone="warn" />
         <Stat label="Calls due now" value={data ? int(data.counts.due) : '–'} tone={data && data.counts.due ? 'bad' : ''} />
