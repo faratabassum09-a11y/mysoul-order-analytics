@@ -107,6 +107,13 @@ async function test() {
     const r = await client.getOrderShipmentDetails(o.orderId);
     if (r.found) { const d = normalizeShipment(r.response, r.id); sample = { orderId: o.orderId, shipwayOrderId: r.id, status: d.status, code: d.statusCode, carrier: d.carrier, awb: d.awb, weightKeys: d.weightKeys }; break; }
   }
+  if (!sample) { // the newest orders may simply not be dispatched yet: try orders Shipway already knows
+    const known = await ShipwayShipment.find({ found: true }).select('orderId').sort({ checkedAt: -1 }).limit(8).lean();
+    for (const k of known) {
+      const r = await client.getOrderShipmentDetails(k.orderId);
+      if (r.found) { const d = normalizeShipment(r.response, r.id); sample = { orderId: k.orderId, shipwayOrderId: r.id, status: d.status, code: d.statusCode, carrier: d.carrier, awb: d.awb, weightKeys: d.weightKeys }; break; }
+    }
+  }
   if (!sample && recent.length) problems.push(`Login works, but Shipway has no shipment for the ${recent.length} newest orders (${recent.map((o) => o.orderId).join(', ')}). Either they are not dispatched yet, or Shipway holds them under a different order number. If dispatched orders appear in Shipway as something other than 1874 or #1874, tell the developer the exact format.`);
   return { ok: problems.length === 0, sample, problems };
 }
