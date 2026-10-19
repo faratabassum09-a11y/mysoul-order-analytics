@@ -120,7 +120,7 @@ function ScoreBar({ score, grade }) {
 
 function Scorecard({ data, compareLabel, mine }) {
   const tt = data.team.tasks; const tp = data.team.tasksPrev;
-  const rows = data.people.filter((p) => p.tasks.due > 0 || p.tasks.assigned > 0 || p.tasks.toDo > 0 || (p.active && p.role !== 'admin'))
+  const rows = data.people.filter((p) => p.role !== 'admin' && (p.tasks.due > 0 || p.tasks.assigned > 0 || p.tasks.toDo > 0 || p.active))
     .sort((a, b) => (b.tasks.score ?? -1) - (a.tasks.score ?? -1) || b.tasks.due - a.tasks.due || a.name.localeCompare(b.name));
   return (
     <>
@@ -162,6 +162,7 @@ function Scorecard({ data, compareLabel, mine }) {
           <li><b>Late</b> = finished, but after that. <b>Missed</b> = overdue and still not done. <b>To do</b> = due in the period but not overdue yet; it is not counted against anyone.</li>
           <li><b>Score</b> = (on time + half of late) ÷ tasks due × 100. A task done on time earns 1 point, done late half a point, missed none.</li>
           <li><b>Grades</b>: 90 and above Excellent, 75 to 89 Good, 50 to 74 Needs improvement, below 50 Poor.</li>
+          <li>Admins are not scored.</li>
           <li>Tasks that are done belong to the person who did them. Tasks still open belong to the person they are assigned to; if nobody holds them they count against the team only.</li>
         </ul>
       </details>
