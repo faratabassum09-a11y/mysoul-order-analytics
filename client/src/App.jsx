@@ -9,6 +9,9 @@ import DispatchDesk from './pages/DispatchDesk.jsx';
 import TeamLogin, { ChangePassword, homeFor } from './pages/TeamLogin.jsx';
 import Overview from './pages/Overview.jsx';
 import TeamDashboard from './pages/TeamDashboard.jsx';
+import NdrPage from './pages/courier/NdrPage.jsx';
+import RtoPage from './pages/courier/RtoPage.jsx';
+import WeightPage from './pages/courier/WeightPage.jsx';
 import Trends from './pages/Trends.jsx';
 import PaymentMode from './pages/PaymentMode.jsx';
 import Campaigns from './pages/Campaigns.jsx';
@@ -19,7 +22,7 @@ import Settings from './pages/Settings.jsx';
 
 // Third item 'sub' = an indented entry that lives under the item above it.
 const NAV = [
-  ['/', 'Overview'], ['/shopify-desk', 'Shopify desk'], ['/team-performance', 'Team performance'], ['/trends', 'Trends'], ['/payment-mode', 'Payment mode'], ['/campaigns', 'Campaigns'], ['/reasons', 'Reasons'],
+  ['/', 'Overview'], ['/shopify-desk', 'Shopify desk'], ['/ndr', 'Non-Delivery Report (NDR)', 'sub'], ['/rto', 'RTO & Returns', 'sub'], ['/weight-discrepancy', 'Weight Discrepancy', 'sub'], ['/team-performance', 'Team performance'], ['/trends', 'Trends'], ['/payment-mode', 'Payment mode'], ['/campaigns', 'Campaigns'], ['/reasons', 'Reasons'],
   ['/orders', 'Orders'], ['/confirm-queue', 'Confirm queue', 'sub'], ['/dispatch-desk', 'Dispatch desk', 'sub'],
   ['/issues', 'Data issues'], ['/settings', 'Settings'],
 ];
@@ -32,8 +35,8 @@ function useBadges() {
     const load = async () => {
       if (document.hidden) return;
       try {
-        const [q, d, s] = await Promise.all([api.get('/flow/confirm-queue'), api.get('/flow/dispatch', { section: 'print_slip' }), api.get('/desk/counts').catch(() => null)]);
-        if (live) setB({ queue: q.counts, desk: d.counts, shop: s });
+        const [q, d, s, c] = await Promise.all([api.get('/flow/confirm-queue'), api.get('/flow/dispatch', { section: 'print_slip' }), api.get('/desk/counts').catch(() => null), api.get('/desk/cases/counts').catch(() => null)]);
+        if (live) setB({ queue: q.counts, desk: d.counts, shop: s, cases: c });
       } catch (e) { /* not signed in or offline: no badges */ }
     };
     load();
@@ -49,6 +52,12 @@ function Badge({ to, badges }) {
     const due = badges.shop.confirm.due + badges.shop.pending.due;
     const open = badges.shop.confirm.total + badges.shop.pending.total;
     if (open > 0) return <span className={`nav-badge ${due > 0 ? 'bad' : ''}`} title={`${due} calls due now`}>{due > 0 ? due : open}</span>;
+  }
+  if (badges.cases) {
+    const c = badges.cases;
+    if (to === '/ndr' && c.ndr.open > 0) return <span className={`nav-badge ${c.ndr.due > 0 ? 'bad' : ''}`} title={`${c.ndr.due} due now`}>{c.ndr.due > 0 ? c.ndr.due : c.ndr.open}</span>;
+    if (to === '/rto' && c.rto.pending > 0) return <span className="nav-badge" title="RTO not yet received">{c.rto.pending}</span>;
+    if (to === '/weight-discrepancy' && c.weight.open > 0) return <span className="nav-badge" title="Open cases">{c.weight.open}</span>;
   }
   if (to === '/confirm-queue' && badges.queue.total > 0) return <span className={`nav-badge ${badges.queue.red > 0 ? 'bad' : ''}`} title={`${badges.queue.red} overdue`}>{badges.queue.total}</span>;
   if (to === '/dispatch-desk') {
@@ -105,6 +114,9 @@ function StaffShell({ user }) {
           <Route path="/confirm-queue" element={<ConfirmQueue />} />
           <Route path="/dispatch-desk" element={<DispatchDesk />} />
           <Route path="/shopify-desk/*" element={<ShopifyDesk />} />
+          <Route path="/ndr" element={<NdrPage />} />
+          <Route path="/rto" element={<RtoPage />} />
+          <Route path="/weight-discrepancy" element={<WeightPage />} />
           <Route path="*" element={<Navigate to={homeFor(user)} replace />} />
         </Routes>
       </main>
@@ -112,6 +124,9 @@ function StaffShell({ user }) {
         <NavLink to="/confirm-queue" className={({ isActive }) => (isActive ? 'active' : '')}>Confirm queue</NavLink>
         <NavLink to="/dispatch-desk" className={({ isActive }) => (isActive ? 'active' : '')}>Dispatch desk</NavLink>
         <NavLink to={deskHome(user)} className={({ isActive }) => (isActive ? 'active' : '')}>Shopify desk</NavLink>
+        {user.role === 'confirmation' && <NavLink to="/ndr" className={({ isActive }) => (isActive ? 'active' : '')}>NDR</NavLink>}
+        {user.role === 'packing' && <NavLink to="/rto" className={({ isActive }) => (isActive ? 'active' : '')}>RTO</NavLink>}
+        {user.role === 'packing' && <NavLink to="/weight-discrepancy" className={({ isActive }) => (isActive ? 'active' : '')}>Weight</NavLink>}
       </nav>
     </div>
   );
@@ -144,6 +159,9 @@ function Dashboard({ user }) {
           <Route path="/campaigns" element={<Campaigns />} />
           <Route path="/reasons" element={<Reasons />} />
           <Route path="/shopify-desk/*" element={<ShopifyDesk />} />
+          <Route path="/ndr" element={<NdrPage />} />
+          <Route path="/rto" element={<RtoPage />} />
+          <Route path="/weight-discrepancy" element={<WeightPage />} />
           <Route path="/orders" element={<Orders />} />
           <Route path="/confirm-queue" element={<ConfirmQueue />} />
           <Route path="/dispatch-desk" element={<DispatchDesk />} />

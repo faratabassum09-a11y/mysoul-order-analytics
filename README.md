@@ -207,3 +207,8 @@ Then **In-transit orders** lists everything handed over, with the Shipway status
 - **Team assignment** (Settings, Team assignment). Per column: Off, Manual or Auto. Auto shares orders by a ratio ("share" per person; 2 and 1 gives 2:1), a new person catches up first, "Present" switches someone off for the day, "Share out again" evens out orders already given. Option to show team members only their own orders. Admins can also give orders from the card or select several and assign at once.
 - **Names and labels** (Settings, Names and labels): rename tabs, columns, buttons, outcomes and tags. Adding a new renameable name is one line in `server/src/lib/labels.js` (and `client/src/labelDefaults.json`, checked by a test).
 - **Order packed**: AWB and courier are read from Shipway on the server (the person cannot edit them); they only add photos (up to 10, camera or gallery). If Shipway has no AWB yet, typing is allowed unless switched off in Settings. Manifest photos can also be several.
+
+## Courier problem tabs (under Shopify desk)
+- **Non-Delivery Report (NDR)** – orders Shipway reports as undelivered (UND/CNA/CRTA) get a case with 3 follow-ups (FU1/FU2/FU3, timing in `ndrHours`), each submit takes a note. Auto-closes when the shipment leaves NDR.
+- **RTO & Returns** – list of RTO parcels from Shipway with Total / New in period / Received / Pending. "Received" is ticked by the team.
+- **Weight Discrepancy** – 3 steps (Review, Submit request on Shipway, Final resolution). Cases come from an uploaded Shipway report (CSV/XLSX) or manual add.
