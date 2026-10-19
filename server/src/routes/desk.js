@@ -42,6 +42,24 @@ router.put('/config', adminOnly, wrap(async (req, res) => res.json({ ...(await s
 router.get('/overview', adminOnly, wrap(async (req, res) => res.json(await svc.overview(req.query))));
 // Team performance: what every person did in a window (admin only)
 router.get('/team-performance', adminOnly, wrap(async (req, res) => res.json(await require('../services/teamPerfService').report(req.query))));
+// ---------------------------------------------------------------- Courier problems: NDR, RTO & returns, weight discrepancy
+const cases = () => require('../services/caseService');
+const C = require('../lib/cases');
+router.get('/cases/counts', wrap(async (req, res) => res.json(await cases().counts())));
+router.get('/cases/config', wrap(async (req, res) => res.json(await cases().getConfig())));
+router.put('/cases/config', adminOnly, wrap(async (req, res) => res.json(await cases().saveConfig(req.body || {}))));
+router.get('/ndr', need('confirmation'), wrap(async (req, res) => res.json(await cases().ndrBoard(req.query))));
+router.post('/ndr/:orderId/submit', need('confirmation'), wrap(async (req, res) => res.json(await cases().ndrSubmit(who(req), orderIdOf(req), { outcome: String((req.body && req.body.outcome) || ''), note: req.body && req.body.note }))));
+router.get('/rto', need('packing'), wrap(async (req, res) => res.json(await cases().rtoList(req.query))));
+router.post('/rto/:orderId/received', need('packing'), wrap(async (req, res) => res.json(await cases().rtoMark(who(req), orderIdOf(req), { received: !(req.body && req.body.received === false), note: req.body && req.body.note }))));
+router.get('/weight', need('packing'), wrap(async (req, res) => res.json(await cases().weightBoard(req.query))));
+router.post('/weight', need('packing'), wrap(async (req, res) => res.status(201).json(await cases().weightAdd(who(req), req.body || {}))));
+router.post('/weight/import', need('packing'), takeFile('file'), wrap(async (req, res) => {
+  const rows = await cases().readSheetFile(req.file);
+  const parsed = C.parseWeightRows(rows, { unit: req.body && req.body.unit === 'g' ? 'g' : 'kg' });
+  res.json(await cases().weightImport(who(req), parsed, req.file.originalname));
+}));
+router.post('/weight/:id/submit', need('packing'), wrap(async (req, res) => res.json(await cases().weightSubmit(who(req), req.params.id, req.body || {}))));
 router.post('/refresh', wrap(async (req, res) => res.json(await svc.refresh())));
 
 router.get('/analysis', wrap(async (req, res) => res.json(await svc.analysisData(req.query))));

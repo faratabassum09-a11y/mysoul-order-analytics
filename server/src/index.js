@@ -106,4 +106,5 @@ mongoose.connect(cfg.mongoUri).then(() => {
   require('./services/shopifySync').start();
   require('./services/shipwaySync').start();
   require('./services/deskService').start();
+  require('./services/caseService').start();
 }).catch((e) => { console.error('[db] connection failed:', e.message); process.exit(1); });

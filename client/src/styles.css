@@ -582,3 +582,20 @@ h2.sd-rowname .sd-rename { font-size: 16px; width: 16ch; }
 
 /* task card: the phone number stays on one line (no "Call" word) */
 .sd-actions .sd-call { flex: 1 1 auto; white-space: nowrap; }
+
+/* ---- Courier problem tabs: NDR, RTO & Returns, Weight discrepancy ---- */
+.cs-reason { background: var(--cancel-bg); border-radius: 8px; padding: 6px 10px; font-weight: 600; color: var(--ink); }
+.cs-tag { display: inline-block; border-radius: 99px; padding: 2px 10px; font-size: 12px; font-weight: 700; background: #eef0f3; color: var(--ink-2); }
+.cs-tag.good { background: #e3f4ec; color: var(--good); } .cs-tag.bad { background: var(--cancel-bg); color: var(--cancel); }
+.cs-tag.warn { background: #fdf0d9; color: #8a5a0c; } .cs-tag.violet { background: #ece8f7; color: var(--pend); }
+.cs-history { margin: 10px 0; padding: 0; list-style: none; display: grid; gap: 6px; font-size: 13px; }
+.cs-history li { border-left: 3px solid var(--line); padding-left: 10px; }
+.cs-closed { margin-top: 18px; } .cs-closed summary { cursor: pointer; font-weight: 700; padding: 8px 0; }
+.sd-choice.picked { outline: 3px solid var(--ink); background: #f6f7f9; }
+.sd-card.ndr { border-left-color: var(--fu2); } .sd-card.weight { border-left-color: var(--pend); }
+.cs-weights { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.cs-weights div { background: #f6f7f9; border-radius: 8px; padding: 6px 10px; display: grid; }
+.cs-weights span { font-size: 12px; color: var(--ink-3); } .cs-weights .bad b { color: var(--cancel); }
+.cs-actions, .cs-upload { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.cs-unit { font-size: 13px; color: var(--ink-2); } .cs-unit select { margin-left: 4px; }
+.sd .sd-top { margin-bottom: 14px; } .sd-table button.link { background: none; border: 0; padding: 0; font: inherit; font-size: 13px; font-weight: 600; text-decoration: underline; color: var(--ink-2); cursor: pointer; }

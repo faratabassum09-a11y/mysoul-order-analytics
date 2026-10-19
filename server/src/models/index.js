@@ -219,4 +219,28 @@ const DispatchProof = mongoose.model('DispatchProof', new Schema({
   byName: String, at: { type: Date, default: Date.now },
 }, { versionKey: false }));
 
-module.exports = { DeskOrder, DeskShot, DispatchProof, StaffUser, OrderFlow, FlowEvent, FlowProof, Snapshot, ShopifyDate, ShopifyOrder, ShipwayShipment, Order, SyncRun, Setting };
+// ---------------------------------------------------------------------------------------------
+// Courier problem cases: NDR (customer follow-ups), weight discrepancy (3 steps) and RTO "received" ticks. One document per order and type.
+// ---------------------------------------------------------------------------------------------
+const shipCaseSchema = new Schema({
+  type: { type: String, enum: ['ndr', 'weight', 'rto'], index: true },
+  orderId: { type: Number, index: true },
+  status: { type: String, default: 'open', index: true }, // open | resolved   (rto: always open; `received` is the tick)
+  step: { type: Number, default: 1 }, // ndr: FU1-3. weight: 1 review, 2 submit on Shipway, 3 final resolution
+  dueAt: Date, // ndr only
+  openedAt: { type: Date, default: Date.now },
+  source: String, // shipway | upload | manual
+  awb: String, courier: String,
+  ndr: { reason: String, statusCode: String, raisedAt: Date },
+  weight: { declaredG: Number, chargedG: Number, diffG: Number, extraCharge: Number, raisedAt: Date, batch: String },
+  requestRef: String, requestAt: Date,
+  resolution: { outcome: String, at: Date, by: String, note: String, amount: Number },
+  received: { at: Date, by: String, byId: String, note: String }, // rto
+  log: [{ _id: false, at: Date, by: String, byId: String, step: Number, action: String, label: String, note: String }],
+  rev: { type: Number, default: 0 },
+}, { timestamps: true, minimize: false });
+shipCaseSchema.index({ type: 1, orderId: 1, status: 1 });
+shipCaseSchema.index({ type: 1, status: 1, step: 1, dueAt: 1 });
+const ShipCase = mongoose.model('ShipCase', shipCaseSchema);
+
+module.exports = { ShipCase, DeskOrder, DeskShot, DispatchProof, StaffUser, OrderFlow, FlowEvent, FlowProof, Snapshot, ShopifyDate, ShopifyOrder, ShipwayShipment, Order, SyncRun, Setting };
