@@ -74,6 +74,7 @@ app.get('/api/shopify/callback', async (req, res) => {
 const teamRoutes = require('./routes/flow');
 app.use('/api/staff', teamRoutes.staff);
 app.use('/api/flow', teamRoutes.flow);
+app.use('/api/desk/stale-queue', require('./routes/staleQueue'));
 app.use('/api/desk', require('./routes/desk'));
 
 // Everything else under /api (the analytics dashboard) needs an admin signed in with their own login. There is no shared key.

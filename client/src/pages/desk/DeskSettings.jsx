@@ -4,6 +4,27 @@ import { useToast } from '../../deskUi.jsx';
 import { DEFAULT_TEMPLATE_PREVIEW, notifyDesk, useLabels } from './shared.jsx';
 import AssignSettings from './AssignSettings.jsx';
 
+// Orders from before the start date that nobody has worked on: shown with a count and one button to clear them.
+function StaleQueue() {
+  const { data, reload } = useApi('/desk/stale-queue');
+  const [busy, setBusy] = useState(false);
+  const [toast, show] = useToast();
+  if (!data) return null;
+  const clear = async () => {
+    if (!window.confirm(`Remove ${data.count} untouched orders placed before ${data.startFrom} from the queue? Orders anyone has called or updated are not touched. They stay visible under Shopify orders.`)) return;
+    setBusy(true);
+    try { const r = await api.post('/desk/stale-queue/clear'); notifyDesk(); reload(); show(`${r.removed} old orders removed from the queue.`); }
+    catch (e) { show(e.message, 'err'); } finally { setBusy(false); }
+  };
+  return (
+    <div className="sd-sum" style={{ marginTop: 12 }}>
+      <b>{data.count}</b> untouched orders placed before <b>{data.startFrom}</b> (the saved start date) are still sitting in the queue.
+      {data.count > 0 && <> <button type="button" className="btn ghost" disabled={busy} onClick={clear}>Remove them from the queue</button></>}
+      <small style={{ display: 'block' }}>Save the start date first. Orders someone has already called or updated are never removed.</small>
+    </div>
+  );
+}
+
 const DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']; // 0 = Monday, as the server numbers them
 const hm = (t) => { const [h, m] = String(t || '12:00').split(':').map(Number); return `${((h + 11) % 12) + 1}:${String(m || 0).padStart(2, '0')} ${h < 12 ? 'AM' : 'PM'}`; };
 const DQ_STAGES = [
@@ -122,6 +143,7 @@ export default function DeskSettings() {
         <h2>Which orders enter the queue</h2>
         <p className="cap">Only Shopify orders placed on or after this date are put into the confirm queue. Older orders still show in Shopify orders. Move the date back to bring older orders in; they start at FU1.</p>
         <label className="sd-set-row"><span><b>Queue starts from</b><small>Date in IST</small></span><input type="date" value={f.startFrom} onChange={(e) => set('startFrom', e.target.value)} /></label>
+        <StaleQueue />
       </div>
       <div className="sd-set-card" id="dispatch">
         <h2>Dispatch queue: working days</h2>
