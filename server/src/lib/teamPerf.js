@@ -7,12 +7,28 @@
 // System and Shopify actions (auto-cancel, assignment, "cancelled in Shopify") never count for anyone.
 const { DAY, fmtDate, istParts } = require('./istTime');
 const DP = require('./dispatch');
+const DK = require('./desk');
 
 const HOUR = 3600 * 1000;
 const CALL_KINDS = ['dnp', 'confirm', 'partial', 'cancel'];
 const DISPATCH_KINDS = ['slip', 'packed', 'handover'];
 const KINDS = [...CALL_KINDS, ...DISPATCH_KINDS];
 const MAX_DAYS = 366;
+// A task is "on time" when it is done before it turns overdue. The Shopify desk calls a follow-up overdue 2 hours after it was due, so that is the grace used here.
+const GRACE_MS = 2 * HOUR;
+// Score: a task done on time earns 1 point, done late 0.5, not done (missed) 0. Score = points / tasks that were due x 100.
+const LATE_CREDIT = 0.5;
+const gradeOf = (score) => (score == null ? 'none' : score >= 90 ? 'excellent' : score >= 75 ? 'good' : score >= 50 ? 'fair' : 'poor');
+const scoreOf = (onTime, late, due) => (due ? Math.round(((onTime + LATE_CREDIT * late) / due) * 100) : null);
+// Lines in an order's history that hand an order to a person, with the name they carry.
+const ASSIGN_LINES = [/^Assigned to (.+?) \(auto\)$/, /^Assigned to (.+?) by .+$/, /^(.+) took this order$/, /^Re-shared to (.+?) by .+$/];
+const assignedTo = (label) => { for (const re of ASSIGN_LINES) { const m = re.exec(String(label || '')); if (m) return m[1].trim(); } return null; };
+// 'on' | 'late' | null (cannot be judged: no deadline known)
+function judge(e) {
+  if (typeof e.late === 'boolean') return e.late ? 'late' : 'on';
+  if (e.due == null) return null;
+  return e.at <= e.due + GRACE_MS ? 'on' : 'late';
+}
 
 // Shopify Desk log action -> kind
 const DESK_ACTION = { dnp: 'dnp', confirm: 'confirm', partial_paid: 'partial', cancel: 'cancel', slip_done: 'slip', packed: 'packed' };
@@ -27,33 +43,49 @@ const inRange = (t, r) => t >= r.start.getTime() && t < r.end.getTime();
 // Returns { events, decisions }.
 //  events    : [{ at: ms, id, name, kind, orderId, late: true|false|null, amount }]
 //  decisions : [{ at: ms, id, name, orderId, ms }]  (the first final decision on an order: how long after the order it came)
-function fromDesk(docs) {
-  const events = []; const decisions = [];
+function fromDesk(docs, cfg = DK.DEFAULT_CONFIG) {
+  const events = []; const decisions = []; const assigns = [];
+  const ch = (cfg && cfg.confirmHours) || DK.DEFAULT_CONFIG.confirmHours;
+  const ph = (cfg && cfg.pendingHours) || DK.DEFAULT_CONFIG.pendingHours;
   for (const d of docs) {
     const dq = d.dq || {};
     let firstDecision = null;
-    for (const e of d.log || []) {
-      if (!isHuman(e.by, e.byId)) continue;
+    // when the call the order is waiting for is due: FU1 counts from the order time, each next one from the previous "no answer"
+    let due = d.orderAt ? new Date(d.orderAt).getTime() + (ch[0] || 0) * HOUR : null;
+    const log = [...(d.log || [])].sort((a, b) => new Date(a.at) - new Date(b.at));
+    for (const e of log) {
+      const at = new Date(e.at).getTime();
+      if (e.action === 'assign') { const who = assignedTo(e.label); if (who) assigns.push({ at, name: who, orderId: d.orderId }); continue; }
+      if (e.action === 'restore') { due = at; continue; }
       const kind = DESK_ACTION[e.action];
+      const before = due; // the deadline of the call this entry answers
+      if (kind === 'dnp') {
+        const fu = /^FU(\d)$/.exec(e.fu || ''); const day = /^Day (\d)$/.exec(e.fu || '');
+        if (fu) { const n = Number(fu[1]); due = n < 3 ? at + (ch[n] || 0) * HOUR : at + (ph[0] || 0) * HOUR; }
+        else if (day) { const n = Number(day[1]); due = n < 3 ? at + (ph[n] || 0) * HOUR : null; }
+        else due = null;
+      }
+      if (!isHuman(e.by, e.byId)) { if (kind === 'confirm' || kind === 'partial' || kind === 'cancel') due = null; continue; }
       if (kind === 'slip' || kind === 'packed') continue; // dispatch steps are read from dq below (they carry the on-time flag)
       if (e.action === 'dispatch') { // the hand-over to the courier; orders from before the 3-step dispatch queue have no dq.handover
         if (dq.handover && dq.handover.at) continue;
-        events.push({ at: new Date(e.at).getTime(), id: e.byId || null, name: e.by, kind: 'handover', orderId: d.orderId, late: null });
+        events.push({ at, id: e.byId || null, name: e.by, kind: 'handover', orderId: d.orderId, late: null });
         continue;
       }
       if (!kind) continue;
-      const at = new Date(e.at).getTime();
-      events.push({ at, id: e.byId || null, name: e.by, kind, orderId: d.orderId, late: null, amount: e.amount });
+      const taskDue = CALL_KINDS.includes(kind) ? before : null;
+      events.push({ at, id: e.byId || null, name: e.by, kind, orderId: d.orderId, late: null, due: taskDue, amount: e.amount });
+      if (kind !== 'dnp') due = null;
       if ((kind === 'confirm' || kind === 'partial' || kind === 'cancel') && !firstDecision) firstDecision = { at, id: e.byId || null, name: e.by };
     }
     if (firstDecision && d.orderAt) decisions.push({ ...firstDecision, orderId: d.orderId, ms: Math.max(0, firstDecision.at - new Date(d.orderAt).getTime()) });
     for (const [step, kind] of [['slip', 'slip'], ['packed', 'packed'], ['handover', 'handover']]) {
       const s = dq[step];
       if (!s || !s.at || !isHuman(s.byName, s.byId)) continue;
-      events.push({ at: new Date(s.at).getTime(), id: s.byId || null, name: s.byName, kind, orderId: d.orderId, late: typeof s.late === 'boolean' ? s.late : null });
+      events.push({ at: new Date(s.at).getTime(), id: s.byId || null, name: s.byName, kind, orderId: d.orderId, late: typeof s.late === 'boolean' ? s.late : null, due: s.dueAt ? new Date(s.dueAt).getTime() : null });
     }
   }
-  return { events, decisions };
+  return { events, decisions, assigns };
 }
 
 function fromFlow(flowEvents, flowDecisions) {
@@ -68,7 +100,7 @@ function fromFlow(flowEvents, flowDecisions) {
     if (!f.decidedAt || !f.orderAt || !isHuman(f.decidedByName, f.decidedById)) continue;
     decisions.push({ at: new Date(f.decidedAt).getTime(), id: f.decidedById || null, name: f.decidedByName, orderId: f.orderId, ms: Math.max(0, new Date(f.decidedAt).getTime() - new Date(f.orderAt).getTime()) });
   }
-  return { events, decisions };
+  return { events, decisions, assigns: [] };
 }
 
 // ------------------------------------------------------------------------------------------------ people
@@ -133,16 +165,63 @@ function bucketPlan(range) {
   return { bucket: 'day', keys, label: (k) => k.slice(5), of: (ms) => fmtDate(new Date(ms)) };
 }
 
+
+// ------------------------------------------------------------------------------------------------ tasks: assigned, due, done on time
+// A task is one piece of work with a deadline: a follow-up call (FU1-3, Day 1-3) or a dispatch step (slip, packed, handover).
+// "Due in the period" = tasks whose deadline falls in it. Each is on time, late (done after it turned overdue) or missed (still not done and overdue).
+// Done tasks belong to the person who did them; tasks still open belong to the person they are assigned to (or to nobody).
+const blankTasks = () => ({ user: null, assigned: 0, onTime: 0, late: 0, missed: 0, toDo: 0 });
+function taskBook(events, assigns, open, range, resolve, dispatchConfig, now) {
+  const by = new Map(); const nobody = { missed: 0, toDo: 0 };
+  const get = (id, name) => { const u = resolve(id, name); if (!by.has(u.id)) by.set(u.id, { ...blankTasks(), user: u }); return by.get(u.id); };
+  for (const e of events) {
+    if (e.due == null || !inRange(e.due, range)) continue;
+    const j = judge(e);
+    if (!j) continue;
+    get(e.id, e.name)[j === 'on' ? 'onTime' : 'late']++;
+  }
+  for (const a of assigns) if (inRange(a.at, range)) get(null, a.name).assigned++;
+  const nowMs = now.getTime();
+  for (const d of open) {
+    let due = null;
+    if (d.stage === 'dispatch') { const x = DP.dueAt(d, dispatchConfig); due = x ? x.getTime() : null; }
+    else if ((d.stage === 'confirm' || d.stage === 'pending') && d.dueAt) due = new Date(d.dueAt).getTime();
+    if (due == null || !inRange(due, range)) continue;
+    const bucket = nowMs > due + GRACE_MS ? 'missed' : 'toDo';
+    if (d.assignee && d.assignee.id) get(String(d.assignee.id), d.assignee.name)[bucket]++; else nobody[bucket]++;
+  }
+  return { by, nobody };
+}
+function taskStats(t) {
+  const x = t || blankTasks();
+  const due = x.onTime + x.late + x.missed;
+  return {
+    assigned: x.assigned, due, onTime: x.onTime, late: x.late, missed: x.missed, toDo: x.toDo,
+    done: x.onTime + x.late, doneRate: ratio(x.onTime + x.late, due), onTimeRate: ratio(x.onTime, due),
+    score: scoreOf(x.onTime, x.late, due), grade: gradeOf(scoreOf(x.onTime, x.late, due)),
+  };
+}
+function teamTasks(book) {
+  const sum = (k) => [...book.by.values()].reduce((n, v) => n + v[k], 0);
+  const onTime = sum('onTime'); const late = sum('late'); const missed = sum('missed') + book.nobody.missed;
+  const due = onTime + late + missed;
+  const score = scoreOf(onTime, late, due);
+  return { assigned: sum('assigned'), due, onTime, late, missed, toDo: sum('toDo') + book.nobody.toDo, unassignedMissed: book.nobody.missed, done: onTime + late, doneRate: ratio(onTime + late, due), onTimeRate: ratio(onTime, due), score, grade: gradeOf(score) };
+}
+
 // ------------------------------------------------------------------------------------------------ the whole report
 // input: { range:{start,end}, prev:{start,end}|null, users, desk:{events,decisions}, flow:{events,decisions}, totals: Map(orderId -> total), open: [DeskOrder], dispatchConfig, now }
 function build(input) {
   const { range, prev, users, totals = new Map(), open = [], dispatchConfig = DP.DEFAULT_DISPATCH_CONFIG, now = new Date() } = input;
   const events = [...input.desk.events, ...input.flow.events];
+  const assigns = [...(input.desk.assigns || []), ...(input.flow.assigns || [])];
   const decisions = [...input.desk.decisions, ...input.flow.decisions];
   const plan = bucketPlan(range);
   const resolve = makeResolver(users);
   const cur = tally(events, decisions, range, resolve, totals, plan.of);
   const old = prev ? tally(events, decisions, prev, resolve, totals, () => '') : new Map();
+  const taskCur = taskBook(events, assigns, open, range, resolve, dispatchConfig, now);
+  const taskOld = prev ? taskBook(events, assigns, open, prev, resolve, dispatchConfig, now) : null;
 
   // live workload: who holds which open orders right now (not limited to the window)
   const work = new Map(); const ensureWork = (id) => { if (!work.has(id)) work.set(id, { confirm: 0, pending: 0, dispatch: 0, overdue: 0 }); return work.get(id); };
@@ -160,7 +239,7 @@ function build(input) {
 
   const everyone = new Map();
   for (const u of users) everyone.set(u.id, { user: u });
-  for (const [id, v] of [...cur, ...old]) if (!everyone.has(id)) everyone.set(id, { user: v.user });
+  for (const [id, v] of [...cur, ...old, ...taskCur.by.entries()].map(([k, x]) => [k, x])) if (!everyone.has(id) && v.user) everyone.set(id, { user: v.user });
 
   const people = [...everyone.values()].map(({ user }) => {
     const c = (cur.get(user.id) || { s: emptyStats() }).s;
@@ -182,8 +261,10 @@ function build(input) {
       series: plan.keys.map((k) => c.series.get(k) || 0),
       prev: { total: totalOf(p), wins: p.confirm + p.partial, calls: callsOf(p), dispatchWork: dispatchOf(p), handover: p.handover },
       open: { ...w, assigned: w.confirm + w.pending + w.dispatch },
+      tasks: taskStats(taskCur.by.get(user.id)),
+      tasksPrev: taskOld ? taskStats(taskOld.by.get(user.id)) : null,
     };
-  }).filter((p) => p.active || p.total > 0 || p.prev.total > 0)
+  }).filter((p) => p.active || p.total > 0 || p.prev.total > 0 || p.tasks.due > 0 || p.tasks.assigned > 0)
     .sort((a, b) => b.total - a.total || a.name.localeCompare(b.name));
 
   // ---- team totals (current and previous window)
@@ -206,6 +287,7 @@ function build(input) {
   };
   const team = teamFrom(cur);
   const teamPrev = prev ? teamFrom(old) : null;
+  team.tasks = teamTasks(taskCur); team.tasksPrev = taskOld ? teamTasks(taskOld) : null;
   team.members = people.filter((p) => p.active && p.role !== 'admin').length;
 
   // ---- trend: one point per hour (single day) or per day
@@ -228,6 +310,8 @@ function build(input) {
   const doers = people.filter((p) => p.total > 0);
   const top = (list, pick, min = 1) => { const r = [...list].sort((a, b) => pick(b) - pick(a))[0]; return r && pick(r) >= min ? r : null; };
   const highlights = [];
+  const reliable = people.filter((p) => p.tasks.due >= 3 && p.tasks.score != null).sort((a, b) => b.tasks.score - a.tasks.score || b.tasks.due - a.tasks.due)[0];
+  if (reliable) highlights.push({ key: 'reliable', title: 'Most reliable', name: reliable.name, value: `${reliable.tasks.score}% task score`, note: `${reliable.tasks.onTime} of ${reliable.tasks.due} tasks on time` });
   const closer = top(people, (p) => p.confirmed + p.partial);
   if (closer) highlights.push({ key: 'closer', title: 'Top closer', name: closer.name, value: `${closer.confirmed + closer.partial} orders won`, note: closer.valueWon ? `₹${closer.valueWon.toLocaleString('en-IN')} order value won` : null });
   const timed = people.filter((p) => p.decisionN >= 3 && p.avgDecisionMs != null).sort((a, b) => a.avgDecisionMs - b.avgDecisionMs)[0];
@@ -248,4 +332,4 @@ function build(input) {
   };
 }
 
-module.exports = { KINDS, CALL_KINDS, DISPATCH_KINDS, MAX_DAYS, fromDesk, fromFlow, build, bucketPlan, makeResolver, callsOf, dispatchOf, totalOf, ratio };
+module.exports = { GRACE_MS, LATE_CREDIT, gradeOf, scoreOf, assignedTo, judge, KINDS, CALL_KINDS, DISPATCH_KINDS, MAX_DAYS, fromDesk, fromFlow, build, bucketPlan, makeResolver, callsOf, dispatchOf, totalOf, ratio };

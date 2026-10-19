@@ -162,3 +162,49 @@ test('highlights name the top closer and the fastest decider only when there is 
   assert.equal(r.highlights.find((h) => h.key === 'closer').name, 'Asha');
   assert.equal(r.highlights.find((h) => h.key === 'fast').name, 'Asha'); // 3 decisions: enough to compare
 });
+
+// ---------------------------------------------------------------- task scorecard: assigned, due, on time
+const taskRun = (docs, over = {}) => T.build({ range, prev, users, desk: T.fromDesk(docs), flow: T.fromFlow([], []), totals: new Map(), open: [], now: at(18, 20), ...over });
+const fuEntry = (by, id, action, when, fu, stage = 'confirm') => ({ at: when, by, byId: id, action, stage, fu });
+
+test('tasks: FU1 is due at the order time, a later follow-up is due after the previous no-answer; 2 hours of grace', () => {
+  // order 8:00, FU1 due 8:00 -> answered 9:00 (on time, within 2 h). FU2 due 9:00+2h = 11:00 -> answered 14:00 (late)
+  const r = taskRun([doc(1, at(18, 8), [fuEntry('Asha', 'u1', 'dnp', at(18, 9), 'FU1'), fuEntry('Asha', 'u1', 'dnp', at(18, 14), 'FU2')])]);
+  const a = person(r, 'Asha').tasks;
+  assert.equal(a.onTime, 1); assert.equal(a.late, 1); assert.equal(a.due, 2); assert.equal(a.missed, 0);
+  assert.equal(a.score, 75); assert.equal(a.grade, 'good'); // (1 + 0.5) / 2
+});
+
+test('tasks: dispatch steps use their stored deadline and on-time flag', () => {
+  const dq = { slip: { at: at(18, 10), byName: 'Ravi', byId: 'u2', dueAt: at(18, 11), late: false }, packed: { at: at(18, 15), byName: 'Ravi', byId: 'u2', dueAt: at(18, 12), late: true } };
+  const t = person(taskRun([doc(5, at(18, 8), [], dq)]), 'Ravi').tasks;
+  assert.deepEqual([t.onTime, t.late, t.due], [1, 1, 2]);
+});
+
+test('tasks: an open order past its deadline is missed for the person it is assigned to; not yet overdue is "to do"; unassigned goes to the team', () => {
+  const open = [
+    { orderId: 10, stage: 'confirm', dueAt: at(18, 9), assignee: { id: 'u1', name: 'Asha' } }, // now 20:00: 11 h overdue -> missed
+    { orderId: 11, stage: 'confirm', dueAt: at(18, 19, 30), assignee: { id: 'u1', name: 'Asha' } }, // due 19:30, now 20:00: within grace -> to do
+    { orderId: 12, stage: 'confirm', dueAt: at(18, 9), assignee: null },
+  ];
+  const r = taskRun([], { open });
+  const a = person(r, 'Asha').tasks;
+  assert.equal(a.missed, 1); assert.equal(a.toDo, 1); assert.equal(a.due, 1); assert.equal(a.score, 0);
+  assert.equal(r.team.tasks.missed, 2); assert.equal(r.team.tasks.unassignedMissed, 1);
+});
+
+test('tasks: assignments are counted from the order history, work due in the period but done after it still counts', () => {
+  const log = [{ at: at(18, 7), by: 'System', byId: 'system', action: 'assign', stage: 'confirm', fu: '', label: 'Assigned to Asha (auto)' }, fuEntry('Asha', 'u1', 'confirm', at(19, 1), 'FU1')];
+  const r = taskRun([doc(20, at(18, 8), log)], { now: at(19, 2) });
+  const a = person(r, 'Asha').tasks;
+  assert.equal(a.assigned, 1);
+  assert.equal(a.late, 1); // due 8:00 on the 18th, done at 1:00 on the 19th
+});
+
+test('tasks: a person with nothing due has no score; grades follow the score', () => {
+  const r = taskRun([]);
+  assert.equal(person(r, 'Idle Person').tasks.score, null);
+  assert.deepEqual([95, 80, 60, 10].map(T.gradeOf), ['excellent', 'good', 'fair', 'poor']);
+  assert.equal(T.assignedTo('Re-shared to Meera K by Boss'), 'Meera K');
+  assert.equal(T.assignedTo('Ravi took this order'), 'Ravi');
+});

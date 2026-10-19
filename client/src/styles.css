@@ -599,3 +599,19 @@ h2.sd-rowname .sd-rename { font-size: 16px; width: 16ch; }
 .cs-actions, .cs-upload { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
 .cs-unit { font-size: 13px; color: var(--ink-2); } .cs-unit select { margin-left: 4px; }
 .sd .sd-top { margin-bottom: 14px; } .sd-table button.link { background: none; border: 0; padding: 0; font: inherit; font-size: 13px; font-weight: 600; text-decoration: underline; color: var(--ink-2); cursor: pointer; }
+
+/* ---- Team performance: task scorecard ---- */
+.tp-grade { display: inline-block; border-radius: 99px; padding: 2px 10px; font-size: 12px; font-weight: 700; background: #eef0f3; color: var(--ink-2); white-space: nowrap; }
+.tp-grade.excellent { background: #dff3e8; color: #17694f; } .tp-grade.good { background: #e8f3dd; color: #4a6a17; }
+.tp-grade.fair { background: #fdf0d9; color: #8a5a0c; } .tp-grade.poor { background: var(--cancel-bg); color: var(--cancel); }
+.tp-scorebar { display: inline-flex; align-items: center; gap: 8px; min-width: 150px; margin-right: 10px; }
+.tp-scorebar .track { flex: 1; height: 9px; background: #e8ebe6; border-radius: 99px; overflow: hidden; min-width: 80px; }
+.tp-scorebar i { display: block; height: 100%; border-radius: 99px; background: #9aa3ad; }
+.tp-scorebar i.excellent { background: #1c7c6c; } .tp-scorebar i.good { background: #7aa335; } .tp-scorebar i.fair { background: #c28a1d; } .tp-scorebar i.poor { background: #b3261e; }
+.tp-scorebar b { min-width: 28px; text-align: right; }
+.tp-score-table .who { display: flex; align-items: center; gap: 10px; }
+.tp-score-table .who > span { display: grid; gap: 2px; }
+.good-text { color: var(--good); font-weight: 700; } .warn-text { color: #8a5a0c; font-weight: 700; }
+.tp-how { margin: 12px 0 4px; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 10px 14px; }
+.tp-how summary { cursor: pointer; font-weight: 700; } .tp-how ul { margin: 10px 0 2px; padding-left: 18px; display: grid; gap: 6px; color: var(--ink-2); }
+.tp-page .cap + .tp-kpis { margin-top: 12px; } .tp-page .tablewrap { margin-top: 12px; }

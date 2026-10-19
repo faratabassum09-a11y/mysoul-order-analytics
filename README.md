@@ -212,3 +212,6 @@ Then **In-transit orders** lists everything handed over, with the Shipway status
 - **Non-Delivery Report (NDR)** – orders Shipway reports as undelivered (UND/CNA/CRTA) get a case with 3 follow-ups (FU1/FU2/FU3, timing in `ndrHours`), each submit takes a note. Auto-closes when the shipment leaves NDR.
 - **RTO & Returns** – list of RTO parcels from Shipway with Total / New in period / Received / Pending. "Received" is ticked by the team.
 - **Weight Discrepancy** – 3 steps (Review, Submit request on Shipway, Final resolution). Cases come from an uploaded Shipway report (CSV/XLSX) or manual add.
+
+## Team performance: task scorecard
+Each follow-up call (FU1–3, Day 1–3) and dispatch step (slip, packed, handover) has a deadline. For the chosen period the tab shows tasks due, done on time (before the task turns overdue; calls get 2 h grace), done late, missed, and a score per person: (on time + half of late) ÷ due × 100. 90+ Excellent, 75–89 Good, 50–74 Needs improvement, below 50 Poor.
