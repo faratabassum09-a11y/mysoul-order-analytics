@@ -55,9 +55,9 @@ function Badge({ to, badges }) {
   }
   if (badges.cases) {
     const c = badges.cases;
-    if (to === '/ndr' && c.ndr.open > 0) return <span className={`nav-badge ${c.ndr.due > 0 ? 'bad' : ''}`} title={`${c.ndr.due} due now`}>{c.ndr.due > 0 ? c.ndr.due : c.ndr.open}</span>;
-    if (to === '/rto' && c.rto.pending > 0) return <span className="nav-badge" title="RTO not yet received">{c.rto.pending}</span>;
-    if (to === '/weight-discrepancy' && c.weight.open > 0) return <span className="nav-badge" title="Open cases">{c.weight.open}</span>;
+    if (to === '/ndr' && c.ndr && c.ndr.open > 0) return <span className={`nav-badge ${c.ndr.due > 0 ? 'bad' : ''}`} title={`${c.ndr.due} due now`}>{c.ndr.due > 0 ? c.ndr.due : c.ndr.open}</span>;
+    if (to === '/rto' && c.rto && c.rto.pending > 0) return <span className="nav-badge" title="RTO not yet received">{c.rto.pending}</span>;
+    if (to === '/weight-discrepancy' && c.weight && c.weight.open > 0) return <span className="nav-badge" title="Open cases">{c.weight.open}</span>;
   }
   if (to === '/confirm-queue' && badges.queue.total > 0) return <span className={`nav-badge ${badges.queue.red > 0 ? 'bad' : ''}`} title={`${badges.queue.red} overdue`}>{badges.queue.total}</span>;
   if (to === '/dispatch-desk') {

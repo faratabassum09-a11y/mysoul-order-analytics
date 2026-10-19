@@ -13,17 +13,19 @@ async function report(q = {}, now = new Date()) {
   T.bucketPlan(w); // rejects a range longer than a year before any query runs
   const from = w.prev ? w.prev.start : w.start;
   const span = { $gte: from, $lt: w.end };
+  const sinceFrom = { $gte: from }; // work that was due in the period may have been done after it ended
 
-  const [users, deskDocs, flowEvents, flowDecisions, open, dispatchConfig] = await Promise.all([
+  const [users, deskDocs, flowEvents, flowDecisions, open, dispatchConfig, deskConfig] = await Promise.all([
     StaffUser.find().select('name role active').lean(),
-    DeskOrder.find({ $or: [{ 'log.at': span }, { 'dq.slip.at': span }, { 'dq.packed.at': span }, { 'dq.handover.at': span }] }).select('orderId orderAt log dq').lean(),
+    DeskOrder.find({ $or: [{ 'log.at': sinceFrom }, { 'dq.slip.at': sinceFrom }, { 'dq.packed.at': sinceFrom }, { 'dq.handover.at': sinceFrom }] }).select('orderId orderAt log dq').lean(),
     FlowEvent.find({ at: span, stage: { $in: ['confirm', 'dispatch'] } }).select('orderId at byId byName action meta').lean(),
     OrderFlow.find({ decidedAt: span }).select('orderId orderAt decidedAt decidedById decidedByName').lean(),
     DeskOrder.find({ stage: { $in: ['confirm', 'pending', 'dispatch'] } }).select('orderId stage dueAt dq confirmedAt orderAt assignee').lean(),
     desk.getDispatchConfig(),
+    desk.getConfig(),
   ]);
 
-  const fromDesk = T.fromDesk(deskDocs);
+  const fromDesk = T.fromDesk(deskDocs, deskConfig);
   const ids = [...new Set(fromDesk.events.filter((e) => e.kind === 'confirm' || e.kind === 'partial').map((e) => e.orderId))];
   const totals = new Map();
   if (ids.length) for (const s of await ShopifyOrder.find({ orderId: { $in: ids } }).select('orderId total').lean()) totals.set(s.orderId, s.total || 0);
