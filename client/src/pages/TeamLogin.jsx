@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { Navigate, useNavigate } from 'react-router-dom';
 import { useStaff } from '../staff.jsx';
 
-export const homeFor = (u) => (!u ? '/team' : u.role === 'packing' ? '/dispatch-desk' : u.role === 'confirmation' ? '/confirm-queue' : '/');
+export const homeFor = (u) => (!u ? '/team' : '/'); // everyone lands on the Overview; what it shows depends on the role
 
 export default function TeamLogin() {
   const { user, login, loading } = useStaff();
