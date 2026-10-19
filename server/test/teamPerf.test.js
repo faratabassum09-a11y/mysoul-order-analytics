@@ -257,3 +257,14 @@ test('an admin viewer still sees everyone', () => {
   const r = run([doc(1, at(18, 8), [entry('Asha', 'u1', 'confirm', at(18, 9))])], { viewer: { id: 'u9', name: 'Boss', role: 'admin' } });
   assert.ok(r.people.length > 1); assert.equal(r.scope.mine, false);
 });
+
+test('admins are never scored: their own tasks are not counted for them or for the team', () => {
+  const dq = { slip: { at: at(19, 9), byName: 'Boss', byId: 'u9', late: false, dueAt: at(19, 12) } };
+  const open = [{ orderId: 5, stage: 'dispatch', dq: { step: 'packed', stepAt: at(19, 8) }, assignee: { id: 'u9', name: 'Boss' } }];
+  const r = T.build({ range: { start: at(19, 0), end: at(20, 0) }, prev: null, users, desk: T.fromDesk([doc(1, at(18, 8), [], dq)]), flow: T.fromFlow([], []), totals: new Map(), open, now: at(19, 12, 30) });
+  const boss = r.people.find((p) => p.name === 'Boss');
+  assert.equal(boss ? boss.tasks.due : 0, 0);
+  assert.equal(r.team.tasks.onTime, 0);                 // the slip Boss did on time is not in the team score
+  assert.equal(r.team.tasks.missed, 1);                 // the overdue order Boss holds counts against the team, not hidden
+  assert.equal(r.team.tasks.unassignedMissed, 1);
+});

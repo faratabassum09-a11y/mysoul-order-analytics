@@ -175,14 +175,16 @@ function bucketPlan(range) {
 const blankTasks = () => ({ user: null, assigned: 0, onTime: 0, late: 0, missed: 0, toDo: 0 });
 function taskBook(events, assigns, open, range, resolve, dispatchConfig, now) {
   const by = new Map(); const nobody = { missed: 0, toDo: 0 };
-  const get = (id, name) => { const u = resolve(id, name); if (!by.has(u.id)) by.set(u.id, { ...blankTasks(), user: u }); return by.get(u.id); };
+  // Admins are not scored: nothing they do or hold counts as a task for anyone (get() returns null for them).
+  const get = (id, name) => { const u = resolve(id, name); if (u.role === 'admin') return null; if (!by.has(u.id)) by.set(u.id, { ...blankTasks(), user: u }); return by.get(u.id); };
   for (const e of events) {
     if (e.due == null || !inRange(e.due, range)) continue;
     const j = judge(e);
     if (!j) continue;
-    get(e.id, e.name)[j === 'on' ? 'onTime' : 'late']++;
+    const row = get(e.id, e.name);
+    if (row) row[j === 'on' ? 'onTime' : 'late']++;
   }
-  for (const a of assigns) if (inRange(a.at, range)) get(null, a.name).assigned++;
+  for (const a of assigns) if (inRange(a.at, range)) { const row = get(null, a.name); if (row) row.assigned++; }
   const nowMs = now.getTime();
   for (const d of open) {
     let due = null;
@@ -190,7 +192,8 @@ function taskBook(events, assigns, open, range, resolve, dispatchConfig, now) {
     else if ((d.stage === 'confirm' || d.stage === 'pending') && d.dueAt) due = new Date(d.dueAt).getTime();
     if (due == null || !inRange(due, range)) continue;
     const bucket = nowMs > due + graceFor(d.stage) ? 'missed' : 'toDo';
-    if (d.assignee && d.assignee.id) get(String(d.assignee.id), d.assignee.name)[bucket]++; else nobody[bucket]++;
+    const row = d.assignee && d.assignee.id ? get(String(d.assignee.id), d.assignee.name) : null;
+    if (row) row[bucket]++; else nobody[bucket]++; // an order held by an admin, or by nobody, counts against the team only
   }
   return { by, nobody };
 }
