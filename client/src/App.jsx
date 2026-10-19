@@ -1,7 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { NavLink, Navigate, Route, Routes } from 'react-router-dom';
 import { api, useApi } from './api.js';
-import { ROLE_LABEL } from './flowUi.js';
 import { useStaff } from './staff.jsx';
 import ShopifyDesk, { deskHome } from './pages/desk/ShopifyDesk.jsx';
 import ConfirmQueue from './pages/ConfirmQueue.jsx';
@@ -27,6 +26,13 @@ const NAV = [
   ['/issues', 'Data issues'], ['/settings', 'Settings'],
 ];
 
+// Which pages each login may open. Admin sees all of NAV; the others get exactly these (the server enforces the same rules).
+const ROLE_PAGES = {
+  confirmation: ['/', '/shopify-desk', '/ndr', '/confirm-queue'],
+  packing: ['/', '/shopify-desk', '/rto', '/weight-discrepancy', '/dispatch-desk'],
+};
+const pagesFor = (user) => (user.role === 'admin' ? null : ROLE_PAGES[user.role] || ['/']);
+
 // Small live counts next to the two desks: what is waiting, and what is overdue.
 function useBadges() {
   const [b, setB] = useState(null);
@@ -35,8 +41,9 @@ function useBadges() {
     const load = async () => {
       if (document.hidden) return;
       try {
-        const [q, d, s, c] = await Promise.all([api.get('/flow/confirm-queue'), api.get('/flow/dispatch', { section: 'print_slip' }), api.get('/desk/counts').catch(() => null), api.get('/desk/cases/counts').catch(() => null)]);
-        if (live) setB({ queue: q.counts, desk: d.counts, shop: s, cases: c });
+        // each count is fetched on its own: a role that may not read one of them still gets the others
+        const [q, d, s, c] = await Promise.all([api.get('/flow/confirm-queue').catch(() => null), api.get('/flow/dispatch', { section: 'print_slip' }).catch(() => null), api.get('/desk/counts').catch(() => null), api.get('/desk/cases/counts').catch(() => null)]);
+        if (live) setB({ queue: q ? q.counts : { total: 0, red: 0 }, desk: d ? d.counts : { delayed: 0, print_slip: 0, ready_for_pickup: 0 }, shop: s, cases: c });
       } catch (e) { /* not signed in or offline: no badges */ }
     };
     load();
@@ -100,54 +107,24 @@ function SyncNote() {
   );
 }
 
-// Packing and confirmation team members get a stripped-down, phone-first screen: their desk, nothing else.
-function StaffShell({ user }) {
-  const { logout } = useStaff();
-  return (
-    <div className="staff-shell">
-      <header className="staff-top">
-        <div><b>MySoul</b><small>{user.name} · {ROLE_LABEL[user.role]}</small></div>
-        <button className="btn ghost" onClick={logout}>Sign out</button>
-      </header>
-      <main>
-        <Routes>
-          <Route path="/confirm-queue" element={<ConfirmQueue />} />
-          <Route path="/dispatch-desk" element={<DispatchDesk />} />
-          <Route path="/shopify-desk/*" element={<ShopifyDesk />} />
-          <Route path="/team-performance" element={<TeamDashboard />} />
-          <Route path="/ndr" element={<NdrPage />} />
-          <Route path="/rto" element={<RtoPage />} />
-          <Route path="/weight-discrepancy" element={<WeightPage />} />
-          <Route path="*" element={<Navigate to={homeFor(user)} replace />} />
-        </Routes>
-      </main>
-      <nav className="staff-tabs" aria-label="Desks">
-        <NavLink to="/confirm-queue" className={({ isActive }) => (isActive ? 'active' : '')}>Confirm queue</NavLink>
-        <NavLink to="/dispatch-desk" className={({ isActive }) => (isActive ? 'active' : '')}>Dispatch desk</NavLink>
-        <NavLink to={deskHome(user)} className={({ isActive }) => (isActive ? 'active' : '')}>Shopify desk</NavLink>
-        <NavLink to="/team-performance" className={({ isActive }) => (isActive ? 'active' : '')}>My performance</NavLink>
-        {user.role === 'confirmation' && <NavLink to="/ndr" className={({ isActive }) => (isActive ? 'active' : '')}>NDR</NavLink>}
-        {user.role === 'packing' && <NavLink to="/rto" className={({ isActive }) => (isActive ? 'active' : '')}>RTO</NavLink>}
-        {user.role === 'packing' && <NavLink to="/weight-discrepancy" className={({ isActive }) => (isActive ? 'active' : '')}>Weight</NavLink>}
-      </nav>
-    </div>
-  );
-}
-
 function Dashboard({ user }) {
   const { logout } = useStaff();
   const badges = useBadges();
+  const allowed = pagesFor(user); // null = admin: everything
+  const ok = (path) => !allowed || allowed.includes(path);
+  const guard = (path, el) => (ok(path) ? el : <Navigate to="/" replace />);
+  const nav = NAV.filter(([to]) => ok(to)).map(([to, label, kind]) => [to === '/shopify-desk' ? deskHome(user) : to, label, kind, to]);
   return (
     <div className="shell">
       <nav className="side">
         <div className="brand">MySoul Orders<small>Sheet analytics</small></div>
-        {NAV.map(([to, label, kind]) => (
-          <NavLink key={to} to={to} end={to === '/'} className={({ isActive }) => `${kind === 'sub' ? 'sub ' : ''}${isActive ? 'active' : ''}`}>
-            {label}<Badge to={to} badges={badges} />
+        {nav.map(([to, label, kind, key]) => (
+          <NavLink key={key} to={to} end={to === '/'} className={({ isActive }) => `${kind === 'sub' ? 'sub ' : ''}${isActive ? 'active' : ''}`}>
+            {label}<Badge to={key} badges={badges} />
           </NavLink>
         ))}
         <div className="spacer" />
-        <SyncNote />
+        {user.role === 'admin' && <SyncNote />}
         <div className="sync-note">
           Signed in as <b>{user.name}</b> · <a href="#out" onClick={(e) => { e.preventDefault(); logout(); }}>Sign out</a>
         </div>
@@ -155,20 +132,20 @@ function Dashboard({ user }) {
       <div className="main">
         <Routes>
           <Route path="/" element={<Overview />} />
-          <Route path="/team-performance" element={<TeamDashboard />} />
-          <Route path="/trends" element={<Trends />} />
-          <Route path="/payment-mode" element={<PaymentMode />} />
-          <Route path="/campaigns" element={<Campaigns />} />
-          <Route path="/reasons" element={<Reasons />} />
-          <Route path="/shopify-desk/*" element={<ShopifyDesk />} />
-          <Route path="/ndr" element={<NdrPage />} />
-          <Route path="/rto" element={<RtoPage />} />
-          <Route path="/weight-discrepancy" element={<WeightPage />} />
-          <Route path="/orders" element={<Orders />} />
-          <Route path="/confirm-queue" element={<ConfirmQueue />} />
-          <Route path="/dispatch-desk" element={<DispatchDesk />} />
-          <Route path="/issues" element={<Issues />} />
-          <Route path="/settings" element={<Settings />} />
+          <Route path="/team-performance" element={guard('/team-performance', <TeamDashboard />)} />
+          <Route path="/trends" element={guard('/trends', <Trends />)} />
+          <Route path="/payment-mode" element={guard('/payment-mode', <PaymentMode />)} />
+          <Route path="/campaigns" element={guard('/campaigns', <Campaigns />)} />
+          <Route path="/reasons" element={guard('/reasons', <Reasons />)} />
+          <Route path="/shopify-desk/*" element={guard('/shopify-desk', <ShopifyDesk />)} />
+          <Route path="/ndr" element={guard('/ndr', <NdrPage />)} />
+          <Route path="/rto" element={guard('/rto', <RtoPage />)} />
+          <Route path="/weight-discrepancy" element={guard('/weight-discrepancy', <WeightPage />)} />
+          <Route path="/orders" element={guard('/orders', <Orders />)} />
+          <Route path="/confirm-queue" element={guard('/confirm-queue', <ConfirmQueue />)} />
+          <Route path="/dispatch-desk" element={guard('/dispatch-desk', <DispatchDesk />)} />
+          <Route path="/issues" element={guard('/issues', <Issues />)} />
+          <Route path="/settings" element={guard('/settings', <Settings />)} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </div>
@@ -181,7 +158,6 @@ function Gate() {
   if (loading) return <div className="empty">Loading…</div>;
   if (!user) return <Navigate to="/team" replace />;
   if (user.mustChangePassword) return <ChangePassword />;
-  if (user.role !== 'admin') return <StaffShell user={user} />;
   return <Dashboard user={user} />;
 }
 
