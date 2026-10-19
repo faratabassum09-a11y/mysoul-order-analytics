@@ -188,7 +188,7 @@ function ShipwayCard() {
             {result && (
               <div className={`banner ${result.ok ? '' : 'err'}`}>
                 <b>{result.ok ? 'Connected.' : 'Login works, but something needs fixing.'}</b>
-                {result.sample && <> Order #{result.sample.orderId} found as "{result.sample.shipwayOrderId}": {result.sample.status}{result.sample.carrier ? `, ${result.sample.carrier}` : ''}{result.sample.awb ? `, AWB ${result.sample.awb}` : ''}.</>}
+                {result.sample && <> Order #{result.sample.orderId} found as "{result.sample.shipwayOrderId}": {result.sample.status}{result.sample.carrier ? `, ${result.sample.carrier}` : ''}{result.sample.awb ? `, AWB ${result.sample.awb}` : ''}. Weight fields Shipway sent: {result.sample.weightKeys && result.sample.weightKeys.length ? result.sample.weightKeys.join(', ') : 'none (Shipway does not send weight details in this lookup)'}.</>}
                 {result.problems.length > 0 && <ul className="log">{result.problems.map((p, i) => <li key={i}>{p}</li>)}</ul>}
               </div>
             )}
