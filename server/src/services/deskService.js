@@ -56,6 +56,17 @@ async function ingest(now = new Date()) {
   if (fresh.length) await autoAssign().catch((e) => console.warn('[desk] auto-assign failed:', e.message)); // new orders get their FU1 person at once
   return { added: fresh.length, cancelled };
 }
+// Orders from before the start date that nobody has touched (see lib/staleQueue.js). preview = just count them.
+async function staleQueue({ clear = false } = {}) {
+  const SQ = require('../lib/staleQueue');
+  const conf = await getConfig();
+  const start = parseYmd(conf.startFrom);
+  const filter = SQ.staleFilter(start);
+  const count = await DeskOrder.countDocuments(filter);
+  if (!clear) return { startFrom: conf.startFrom, count, removed: 0 };
+  const r = await DeskOrder.deleteMany(filter);
+  return { startFrom: conf.startFrom, count, removed: r.deletedCount || 0 };
+}
 let lastIngest = 0;
 async function ingestIfStale(maxAgeMs = 15000) {
   if (Date.now() - lastIngest < maxAgeMs) return;
@@ -753,4 +764,4 @@ function start() {
   }
 }
 
-module.exports = { getAssignConfig, saveAssignConfig, assignOverview, autoAssign, assignManual, assignBulk, rebalance, team, callBoard, analysisData, analysisSheet, getConfig, saveConfig, getDispatchConfig, saveDispatchConfig, liveAwb, dispatchBoard, dispatchSlip, dispatchPacked, dispatchHandover, proofFile, transitList, refreshTransit, ingest, ingestIfStale, act, savePartial, shotFile, counts, queue, ordersList, orderDetail, overview, refresh, start, cardOf };
+module.exports = { staleQueue, getAssignConfig, saveAssignConfig, assignOverview, autoAssign, assignManual, assignBulk, rebalance, team, callBoard, analysisData, analysisSheet, getConfig, saveConfig, getDispatchConfig, saveDispatchConfig, liveAwb, dispatchBoard, dispatchSlip, dispatchPacked, dispatchHandover, proofFile, transitList, refreshTransit, ingest, ingestIfStale, act, savePartial, shotFile, counts, queue, ordersList, orderDetail, overview, refresh, start, cardOf };
