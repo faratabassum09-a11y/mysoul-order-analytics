@@ -71,6 +71,8 @@ const ShipwayShipment = mongoose.model('ShipwayShipment', new Schema({
   statusCode: String, status: String, group: { type: String, index: true }, final: Boolean,
   carrier: String, awb: String, from: String, to: String,
   pickupDate: String, statusTime: String, statusAt: Date,
+  weightKeys: [String], // weight / charge fields Shipway sent with the order (to check what it really provides)
+  weightInfo: Schema.Types.Mixed, // set when Shipway shows a charged weight above the declared one
   history: [{ _id: false, code: String, status: String, at: Date }], // changes seen by this app (Shipway's reply carries only the latest status)
   checkedAt: Date, changedAt: Date, error: String,
 }, { minimize: false }));
@@ -233,6 +235,7 @@ const shipCaseSchema = new Schema({
   awb: String, courier: String,
   ndr: { reason: String, statusCode: String, raisedAt: Date },
   weight: { declaredG: Number, chargedG: Number, diffG: Number, extraCharge: Number, raisedAt: Date, batch: String },
+  wants: { at: Date, by: String, note: String, count: Number }, // ndr: the customer said they still want it (card sits in FU2)
   requestRef: String, requestAt: Date,
   resolution: { outcome: String, at: Date, by: String, note: String, amount: Number },
   received: { at: Date, by: String, byId: String, note: String }, // rto

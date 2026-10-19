@@ -42,7 +42,9 @@ function ndrAction(c, outcome, note, who = { id: 'system', name: 'System' }, con
   const base = { at: now, by: who.name, byId: who.id, step: c.step, action: outcome, note: n };
   const tail = n ? ` · ${n}` : '';
   if (outcome === 'wants') {
-    return { set: { status: 'resolved', dueAt: null, resolution: { outcome: 'wants', at: now, by: who.name, note: n } }, entries: [{ ...base, label: `${fu}: customer still wants the order. Ask the courier to deliver again${tail}` }] };
+    // The customer still wants it: the card goes to FU2 (whatever column it was in) and stays open until Shipway shows Delivered or RTO.
+    const wants = { at: now, by: who.name, note: n, count: ((c.wants && c.wants.count) || 0) + 1 };
+    return { set: { step: 2, dueAt: new Date(now.getTime() + config.ndrHours[1] * HOUR), wants }, entries: [{ ...base, label: `${fu}: customer still wants the order. Added to FU2 to follow up until it is delivered${tail}` }] };
   }
   if (outcome === 'not_wants') {
     return { set: { status: 'resolved', dueAt: null, resolution: { outcome: 'not_wants', at: now, by: who.name, note: n } }, entries: [{ ...base, label: `${fu}: customer does not want the order. Return it to origin (RTO)${tail}` }] };
@@ -57,12 +59,21 @@ function ndrAction(c, outcome, note, who = { id: 'system', name: 'System' }, con
   return { set: { status: 'resolved', dueAt: null, resolution: { outcome: 'no_response', at: now, by: who.name, note: n } }, entries: [{ ...base, label: `FU3: did not pick up. No response after 3 follow-ups: return it to origin (RTO)${tail}` }] };
 }
 
-// A shipment that is no longer undelivered closes its own case. shipment: { group, status }
+// Only two Shipway results close an NDR case by themselves: Delivered or RTO. Any other status (out for delivery, in transit, ...) leaves it open,
+// so the team keeps following it. shipment: { group, status }
 function ndrAutoClose(c, shipment, now = new Date()) {
-  if (c.status !== 'open' || !shipment || shipment.group === 'ndr') return null;
-  const outcome = shipment.group === 'delivered' ? 'delivered' : shipment.group === 'rto' ? 'rto' : 'moved';
-  const text = shipment.group === 'delivered' ? 'Delivered' : shipment.group === 'rto' ? 'Going back to origin (RTO)' : `Shipway status is now “${shipment.status}”`;
+  if (c.status !== 'open' || !shipment || (shipment.group !== 'delivered' && shipment.group !== 'rto')) return null;
+  const outcome = shipment.group;
+  const text = outcome === 'delivered' ? 'Delivered' : 'Going back to origin (RTO)';
   return { set: { status: 'resolved', dueAt: null, resolution: { outcome, at: now, by: 'Shipway', note: '' } }, entries: [{ at: now, by: 'Shipway', byId: 'system', step: c.step, action: 'auto_close', note: '', label: `Closed by Shipway: ${text}` }] };
+}
+
+// Older versions closed a case as "Status changed" whenever Shipway moved off NDR. Put those right: Delivered / RTO get their real result, anything else is reopened.
+function ndrReclassify(c, shipment, config = DEFAULT_CASE_CONFIG, now = new Date()) {
+  if (c.status !== 'resolved' || !c.resolution || c.resolution.outcome !== 'moved' || !shipment || shipment.group === 'ndr') return null;
+  if (shipment.group === 'delivered' || shipment.group === 'rto') return { set: { 'resolution.outcome': shipment.group }, entries: [] };
+  const step = Math.min(3, Math.max(1, c.step || 1));
+  return { set: { status: 'open', step, dueAt: new Date(now.getTime() + config.ndrHours[step - 1] * HOUR), resolution: { outcome: null, at: null, by: '', note: '' } }, entries: [{ at: now, by: 'System', byId: 'system', step, action: 'reopened', note: '', label: `Reopened: Shipway status “${shipment.status}” is not Delivered or RTO yet` }] };
 }
 
 // ------------------------------------------------------------------------------------------------ weight discrepancy
@@ -156,6 +167,22 @@ function parseWeightRows(rows, { unit = 'kg' } = {}) {
   return { rows: out, skipped, columns: col };
 }
 
+// Weight facts that came with a Shipway order lookup (no file involved). fields: { shipwayKey: value } for every weight-looking key Shipway sent.
+// Returns { declaredG, chargedG, diffG, extraCharge } when Shipway reports a charged weight above the declared one, else null.
+const SHIPMENT_DECLARED = [...FIELDS.declared, 'weight', 'packageweight', 'productweight', 'dispatchweight'];
+function weightFromShipment(fields, { unit = 'g' } = {}) {
+  if (!fields || typeof fields !== 'object') return null;
+  const keys = Object.keys(fields);
+  const pick = (names) => { for (const n of names) { const k = keys.find((x) => norm(x) === n); if (k && fields[k] !== '' && fields[k] != null) return fields[k]; } return null; };
+  const declaredG = gramsOf(pick(SHIPMENT_DECLARED), unit);
+  const chargedG = gramsOf(pick(FIELDS.charged), unit);
+  const extraCharge = numberOf(pick(FIELDS.charge));
+  let diffG = gramsOf(pick(FIELDS.diff), unit);
+  if (diffG == null && declaredG != null && chargedG != null) diffG = chargedG - declaredG;
+  if (diffG == null || diffG <= 0) return null;
+  return { declaredG, chargedG, diffG, extraCharge };
+}
+
 // ------------------------------------------------------------------------------------------------ RTO
 const RTO_CODES = new Set(['RTO', 'RTD']);
 // When did this shipment start coming back? The first RTO status Shipway showed, else when the status last changed.
@@ -175,5 +202,5 @@ function rtoStats(items, range) {
 
 module.exports = {
   HOUR, MAX_NOTE, NDR_OUTCOMES, WEIGHT_STEPS, WEIGHT_STEP_LABEL, DEFAULT_CASE_CONFIG, httpErr, cleanNote, normaliseCaseConfig,
-  ndrAction, ndrAutoClose, weightAction, parseWeightRows, gramsOf, numberOf, rtoSince, rtoState, rtoStats,
+  ndrAction, ndrAutoClose, ndrReclassify, weightAction, weightFromShipment, parseWeightRows, gramsOf, numberOf, rtoSince, rtoState, rtoStats,
 };

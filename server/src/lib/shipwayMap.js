@@ -18,6 +18,7 @@ const FINAL = new Set(['DEL', 'RTD', 'CAN', 'LOST', 'RDEL', 'RCAN', 'RCLO']);
 const GROUPS = [
   ['delivered', 'Delivered'], ['transit', 'In transit'], ['ndr', 'Undelivered / NDR'], ['rto', 'RTO'], ['cancelled', 'Cancelled'], ['lost', 'Lost'], ['reverse', 'Reverse'], ['other', 'Other'],
 ];
+const { weightFromShipment } = require('./cases');
 const clean = (v) => (v === undefined || v === null ? '' : String(v).trim());
 
 function parseWhen(v) {
@@ -42,6 +43,8 @@ function normalizeShipment(r, shipwayOrderId = '') {
     final: FINAL.has(code),
     carrier: clean(x.carrier), awb: clean(x.awbno || x.awb), from: clean(x.from), to: clean(x.to),
     pickupDate: clean(x.pickup_date), statusTime: clean(x.time), statusAt: parseWhen(x.time),
+    weightKeys: x.weight_fields ? Object.keys(x.weight_fields) : [],
+    weightInfo: weightFromShipment(x.weight_fields, { unit: process.env.SHIPWAY_WEIGHT_UNIT === 'kg' ? 'kg' : 'g' }), // null = Shipway reports no extra weight
   };
 }
 
