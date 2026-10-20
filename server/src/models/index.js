@@ -105,7 +105,8 @@ const Setting = mongoose.model('Setting', new Schema({
 const StaffUser = mongoose.model('StaffUser', new Schema({
   username: { type: String, unique: true }, // lower case
   name: String,
-  role: { type: String, enum: ['admin', 'confirmation', 'packing'], index: true },
+  role: { type: String, enum: ['admin', 'confirmation', 'packing'], index: true }, // primary role (kept in step with roles)
+  roles: { type: [String], enum: ['admin', 'confirmation', 'packing'], default: undefined }, // every role this person holds; empty on old logins, which fall back to role
   passwordHash: String,
   active: { type: Boolean, default: true },
   mustChangePassword: { type: Boolean, default: false },

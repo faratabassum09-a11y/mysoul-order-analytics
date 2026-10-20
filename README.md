@@ -105,9 +105,9 @@ Orders are dispatched from Shipway, so every order has **two statuses, shown sep
 Two screens under **Orders** in the left menu, built for the team's phones.
 
 **First-time setup**
-1. Settings, **Team logins**: create the first **Admin** (the very first admin can be created openly only while no admin exists; create it right after deploying). Then add each person with their **own** login and a temporary password; they choose their own at first sign-in. Never share a login: every action is stamped with the person.
+1. Settings, **Team logins**: create the first **Admin** (the very first admin can be created openly only while no admin exists; create it right after deploying). Then add each person with their **own** login and a temporary password; they choose their own at first sign-in. Never share a login: every action is stamped with the person. Tick the person's team(s): **Confirmation team**, **Dispatch team**, or **both**. Someone on both teams works the confirm queue and the dispatch queue with one login and is **not** an admin (no Settings, no money figures, no restoring cancelled orders). Ticking **Admin** covers everything. Roles can be changed later in the same table; the person is signed out and signs in again to pick up the change.
 2. Settings, **Confirm queue settings**: what happens after the third unanswered call (auto-cancel or escalate), the date the queue starts from (default: last 7 days), and the **partial payment link** template (for example your Razorpay page, with `{orderId}` and `{amount}` placeholders).
-3. Team members open `https://YOUR-SITE/team` on their phone and sign in. Confirmation and packing roles see only their desk (bottom tabs); admins see the whole dashboard.
+3. Team members open `https://YOUR-SITE/team` on their phone and sign in. Confirmation and dispatch roles see only their desk (bottom tabs), and someone on both teams sees both; admins see the whole dashboard.
 
 **Confirm queue.** Pending orders, oldest first, each with a live timer from the order time: green under 2 h, amber 2 to 4 h, red after 4 h (the timer uses the server clock, so a wrong phone clock cannot change the colour). One tap each: **Confirmed**, **Partial pay** (asks how much was paid), **Cancel** (a reason from a fixed list is required), **No answer** (attempt 1, 2, 3 with a 30 minute gap; the third either cancels automatically or escalates, per Settings). Call, WhatsApp and Payment link buttons log themselves; phone numbers are only sent to the browser when one of these is tapped. There is no free-text field anywhere.
 
@@ -182,9 +182,9 @@ A separate section in the left menu, **Shopify desk**, with tabs. It reads **onl
 
 **Live arrival.** The server already pulls Shopify every 2 minutes (and the desk checks for new orders after every pull). For instant arrival, add two webhooks in the Shopify Dev Dashboard, for `orders/create` and `orders/updated`, pointing to `https://YOUR-SERVER/api/webhook/shopify`. They are verified with the app's client secret. **Refresh from Shopify** pulls on demand.
 
-**Who can do what.** Admin: everything. Confirmation team: Confirm queue, Pending, Partial paid and Cancelled tabs and their actions. Packing team: Dispatch queue. Everyone signs in with their own login; every action is stamped with the person and time.
+**Who can do what.** Admin: everything. Confirmation team: Confirm queue, Pending, Partial paid and Cancelled tabs and their actions. Dispatch (packing) team: Dispatch queue. A person can be on **both** teams and then gets both sets of tabs and actions, still without any admin rights. Everyone signs in with their own login; every action is stamped with the person and time.
 
-Tests for the rules: `npm test` (`server/test/desk.test.js`). Two older tests (`core`, `shipway`) already failed before this change.
+Tests for the rules: `npm test` (`server/test/desk.test.js`; the multi-role rules are in `server/test/roles.test.js`). Two older tests (`core`, `shipway`) already failed before this change.
 
 ## Dispatch queue: packing slip, order packed, order handover, in transit
 

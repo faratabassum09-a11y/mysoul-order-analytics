@@ -1,7 +1,7 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { api, deskProofUrl, deskShotUrl, useApi } from '../../api.js';
 import { Sheet } from '../../deskUi.jsx';
-import { compressPhoto, duration, fmtWhen, shortSpan, useNow, useServerOffset } from '../../flowUi.js';
+import { compressPhoto, duration, fmtWhen, hasRole, isAdmin, shortSpan, useNow, useServerOffset } from '../../flowUi.js';
 import { inr } from '../../format.js';
 import LABEL_FALLBACK from '../../labelDefaults.json';
 
@@ -40,7 +40,7 @@ export const useDeskConfig = () => useLabels().conf;
 
 // The people an admin can give a column's orders to: confirmation team for the call columns, packing team for the dispatch columns (admins can do both).
 export const useTeam = () => { const { data } = useApi('/desk/team'); return (data && data.team) || []; };
-export const peopleFor = (team, kind) => team.filter((p) => p.role === 'admin' || p.role === (kind === 'dispatch' ? 'packing' : 'confirmation'));
+export const peopleFor = (team, kind) => team.filter((p) => isAdmin(p) || hasRole(p, kind === 'dispatch' ? 'packing' : 'confirmation'));
 
 // ---------------------------------------------------------------- small pieces
 export const STAGE_NAME = { confirm: 'Confirm queue', pending: 'Pending', dispatch: 'To dispatch', dispatched: 'Dispatched', cancelled: 'Cancelled', none: 'Not in queue' };

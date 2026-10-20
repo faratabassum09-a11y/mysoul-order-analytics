@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { NavLink, Navigate, Route, Routes } from 'react-router-dom';
 import { api, useApi } from './api.js';
 import { useStaff } from './staff.jsx';
+import { isAdmin, rolesOf } from './flowUi.js';
 import ShopifyDesk, { deskHome } from './pages/desk/ShopifyDesk.jsx';
 import ConfirmQueue from './pages/ConfirmQueue.jsx';
 import DispatchDesk from './pages/DispatchDesk.jsx';
@@ -31,7 +32,8 @@ const ROLE_PAGES = {
   confirmation: ['/', '/shopify-desk', '/ndr', '/confirm-queue'],
   packing: ['/', '/shopify-desk', '/rto', '/weight-discrepancy', '/dispatch-desk'],
 };
-const pagesFor = (user) => (user.role === 'admin' ? null : ROLE_PAGES[user.role] || ['/']);
+// A person on both teams gets the pages of both.
+const pagesFor = (user) => (isAdmin(user) ? null : [...new Set(['/', ...rolesOf(user).flatMap((r) => ROLE_PAGES[r] || [])])]);
 
 // Small live counts next to the two desks: what is waiting, and what is overdue.
 function useBadges() {

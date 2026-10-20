@@ -6,6 +6,7 @@ const multer = require('multer');
 const svc = require('../services/deskService');
 const D = require('../lib/desk');
 const { staffFromReq } = require('./flow');
+const A = require('../lib/staffAuth');
 
 const wrap = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
 const httpErr = (status, message) => Object.assign(new Error(message), { status });
@@ -17,8 +18,8 @@ router.use(wrap(async (req, res, next) => {
   if (req.staff.mustChangePassword) return res.status(403).json({ error: 'Set your own password first.', code: 'change_password' });
   next();
 }));
-const need = (...roles) => (req, res, next) => (req.staff.role === 'admin' || roles.includes(req.staff.role) ? next() : res.status(403).json({ error: 'Your role cannot do this.' }));
-const adminOnly = (req, res, next) => (req.staff.role === 'admin' ? next() : res.status(403).json({ error: 'Admins only' }));
+const need = (...roles) => (req, res, next) => (A.isAdmin(req.staff) || A.hasRole(req.staff, ...roles) ? next() : res.status(403).json({ error: 'Your role cannot do this.' }));
+const adminOnly = (req, res, next) => (A.isAdmin(req.staff) ? next() : res.status(403).json({ error: 'Admins only' }));
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 8 * 1024 * 1024, files: 10 } });
 const uploadErr = (next) => (e) => {
@@ -33,7 +34,7 @@ const takeFiles = (field, legacy) => (req, res, next) => upload.fields([{ name: 
   next();
 }));
 const orderIdOf = (req) => { const n = Number(req.params.orderId); if (!Number.isInteger(n) || n <= 0) throw httpErr(400, 'Bad order number'); return n; };
-const who = (req) => ({ id: req.staff.id, name: req.staff.name, role: req.staff.role });
+const who = (req) => ({ id: req.staff.id, name: req.staff.name, role: req.staff.role, roles: req.staff.roles });
 
 router.get('/counts', wrap(async (req, res) => res.json(await svc.counts())));
 // Everyone signed in reads the settings (the screens need the names, hours and cancel reasons). Names come with their defaults so Settings can show what "reset" returns.
@@ -93,9 +94,9 @@ router.post('/orders/:orderId/assign', need('confirmation', 'packing'), wrap(asy
 router.post('/orders/:orderId/action', wrap(async (req, res) => {
   const action = String((req.body && req.body.action) || '');
   const b = req.body || {};
-  if (action === 'restore') { if (req.staff.role !== 'admin') throw httpErr(403, 'Only an admin can restore a cancelled order.'); }
-  else if (action === 'dispatch') { if (!['admin', 'packing'].includes(req.staff.role)) throw httpErr(403, 'Your role cannot do this.'); }
-  else if (!['admin', 'confirmation'].includes(req.staff.role)) throw httpErr(403, 'Your role cannot do this.');
+  if (action === 'restore') { if (!A.isAdmin(req.staff)) throw httpErr(403, 'Only an admin can restore a cancelled order.'); }
+  else if (action === 'dispatch') { if (!A.hasRole(req.staff, 'admin', 'packing')) throw httpErr(403, 'Your role cannot do this.'); }
+  else if (!A.hasRole(req.staff, 'admin', 'confirmation')) throw httpErr(403, 'Your role cannot do this.');
   res.json(await svc.act(who(req), orderIdOf(req), action, b));
 }));
 router.post('/orders/:orderId/partial', need('confirmation'), takeFile('screenshot'), wrap(async (req, res) => {

@@ -22,7 +22,10 @@ function slotOf(doc) {
 
 // Confirmation people work the call queues, packing people the dispatch queue. Admins can be put on any slot.
 const slotKind = (slot) => (/^(confirm|pending)/.test(slot) ? 'confirmation' : 'packing');
-const roleFits = (slot, role) => role === 'admin' || role === slotKind(slot);
+// `who` may be a role string, a list of roles, or a person ({ role, roles }). A person with both teams fits both kinds of column.
+const rolesIn = (who) => (who && typeof who === 'object' && !Array.isArray(who) ? (Array.isArray(who.roles) && who.roles.length ? who.roles : [who.role]) : Array.isArray(who) ? who : [who]);
+const roleFits = (slot, who) => { const r = rolesIn(who); return r.includes('admin') || r.includes(slotKind(slot)); };
+const isAdminish = (who) => rolesIn(who).includes('admin');
 
 const emptySlot = () => ({ mode: 'off', members: [] });
 const DEFAULT_ASSIGN = { visibility: 'all', keepSamePerson: false, slots: Object.fromEntries(SLOTS.map((k) => [k, emptySlot()])) };
@@ -60,7 +63,7 @@ function normaliseAssignConfig(body = {}, current = DEFAULT_ASSIGN, team = null)
         if (byId) {
           const t = byId.get(id);
           if (!t || t.active === false) throw httpErr(400, 'One of the people you picked is not an active team member');
-          if (!roleFits(slot, t.role)) throw httpErr(400, `${t.name || 'That person'} cannot be put on this column (wrong team)`);
+          if (!roleFits(slot, t)) throw httpErr(400, `${t.name || 'That person'} cannot be put on this column (wrong team)`);
         }
         return { id, weight, on: m.on !== false };
       });
@@ -131,7 +134,7 @@ function decide(doc, slotConf, { keepSamePerson = false, load = new Map(), isAct
 
 // Can this person act on / see this order? admins always. With "own only" a person sees the orders assigned to them plus the ones nobody holds yet.
 function canWork(staff, doc, visibility) {
-  if (!staff || staff.role === 'admin' || visibility !== 'own') return true;
+  if (!staff || isAdminish(staff) || visibility !== 'own') return true;
   const id = doc && doc.assignee && doc.assignee.id;
   return !id || String(id) === String(staff.id);
 }

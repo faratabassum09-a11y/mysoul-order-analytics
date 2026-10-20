@@ -8,6 +8,7 @@ const AS = require('../lib/assign');
 const F = require('../lib/flow');
 const { resolveWindow } = require('../lib/windows');
 const { parseYmd, fmtDate } = require('../lib/istTime');
+const { rolesOf, isAdmin } = require('../lib/staffAuth');
 
 const httpErr = D.httpErr;
 const ACTIVE = ['confirm', 'pending', 'dispatch'];
@@ -84,7 +85,7 @@ async function applyTransition(doc, t, { assign = true } = {}) {
 }
 // With "team members see only their own orders" switched on, an order held by someone else can only be worked by them (or an admin).
 async function assertCanWork(user, doc) {
-  if (!user || user.role === 'admin' || !doc.assignee || !doc.assignee.id) return;
+  if (!user || isAdmin(user) || !doc.assignee || !doc.assignee.id) return;
   const cfg = await getAssignConfig();
   if (!AS.canWork(user, doc, cfg.visibility)) throw httpErr(403, `Order #${doc.orderId} is assigned to ${doc.assignee.name || 'someone else'}. Ask an admin to reassign it.`);
 }
@@ -252,9 +253,9 @@ async function getAssignConfig() {
   const s = await Setting.findOne({ key: 'desk.assign' }).lean();
   return AS.normaliseAssignConfig({}, (s && s.value) || AS.DEFAULT_ASSIGN);
 }
-const activeTeam = async () => (await StaffUser.find({ active: true }).select('name role').sort({ role: 1, name: 1 }).lean()).map((u) => ({ id: String(u._id), name: u.name, role: u.role, active: true }));
+const activeTeam = async () => (await StaffUser.find({ active: true }).select('name role roles').sort({ role: 1, name: 1 }).lean()).map((u) => ({ id: String(u._id), name: u.name, role: u.role, roles: rolesOf(u), active: true }));
 // Anyone signed in may see the names (the card's "assigned to" and the filter); only admins change them.
-async function team() { return (await activeTeam()).map(({ id, name, role }) => ({ id, name, role })); }
+async function team() { return (await activeTeam()).map(({ id, name, role, roles }) => ({ id, name, role, roles })); }
 
 // What a board needs to know about assignment: is it on for these columns, and who can an admin pick.
 const assignBrief = (cfg, slots) => ({ visibility: cfg.visibility, modes: Object.fromEntries(slots.map((k) => [k, cfg.slots[k].mode])) });
@@ -262,7 +263,7 @@ const assignBrief = (cfg, slots) => ({ visibility: cfg.visibility, modes: Object
 // Narrow a list to one person's orders. admin: any person, "me", or "none" (unassigned). With "own only" on, a team member only ever gets their own plus the unassigned ones.
 function assigneeFilter(opts, cfg) {
   const v = opts.viewer; const want = String(opts.assignee || ''); const f = {};
-  if (v && v.role !== 'admin' && cfg.visibility === 'own') {
+  if (v && !isAdmin(v) && cfg.visibility === 'own') {
     if (want === 'none') f['assignee.id'] = null; else if (want === 'me') f['assignee.id'] = v.id; else f.$or = [{ 'assignee.id': v.id }, { 'assignee.id': null }];
     return f;
   }
@@ -329,10 +330,10 @@ async function assignManual(user, orderId, userId) {
   if (!slot) throw httpErr(409, `Order #${orderId} is no longer waiting for anyone. Refresh to see its latest status.`);
   if ((await getAssignConfig()).slots[slot].mode === 'off') throw httpErr(409, 'Assigning is switched off for this column. An admin can turn on Manual or Auto in Settings, Team assignment.');
   const target = userId === 'me' ? user.id : (userId || null);
-  if (user.role !== 'admin') {
+  if (!isAdmin(user)) {
     if (String(target) !== String(user.id)) throw httpErr(403, 'Only an admin can give an order to someone else.');
     if (doc.assignee && doc.assignee.id && doc.assignee.id !== user.id) throw httpErr(409, `Order #${orderId} was just taken by ${doc.assignee.name}.`);
-    if (!AS.roleFits(slot, user.role)) throw httpErr(403, 'Your role cannot work this column.');
+    if (!AS.roleFits(slot, user)) throw httpErr(403, 'Your role cannot work this column.');
   }
   const filter = { orderId, rev: doc.rev || 0 };
   const now = new Date();
@@ -340,11 +341,11 @@ async function assignManual(user, orderId, userId) {
   if (!target) {
     upd = await DeskOrder.findOneAndUpdate(filter, { $unset: { assignee: '' }, $push: { log: { at: now, by: user.name, byId: user.id, action: 'assign', stage: doc.stage, fu: '', label: 'Taken off the person it was assigned to' } } }, { new: true }).lean();
   } else {
-    const u = await StaffUser.findById(target).select('name role active').lean();
+    const u = await StaffUser.findById(target).select('name role roles active').lean();
     if (!u || !u.active) throw httpErr(400, 'That person is not an active team member.');
-    if (!AS.roleFits(slot, u.role)) throw httpErr(400, `${u.name} is in a different team and cannot work this column.`);
+    if (!AS.roleFits(slot, u)) throw httpErr(400, `${u.name} is in a different team and cannot work this column.`);
     const self = String(target) === String(user.id);
-    upd = await DeskOrder.findOneAndUpdate(filter, { $set: { assignee: { id: String(u._id), name: u.name, slot, at: now, by: user.name, auto: false } }, $push: { log: { at: now, by: user.name, byId: user.id, action: 'assign', stage: doc.stage, fu: '', label: self && user.role !== 'admin' ? `${u.name} took this order` : `Assigned to ${u.name} by ${user.name}` } } }, { new: true }).lean();
+    upd = await DeskOrder.findOneAndUpdate(filter, { $set: { assignee: { id: String(u._id), name: u.name, slot, at: now, by: user.name, auto: false } }, $push: { log: { at: now, by: user.name, byId: user.id, action: 'assign', stage: doc.stage, fu: '', label: self && !isAdmin(user) ? `${u.name} took this order` : `Assigned to ${u.name} by ${user.name}` } } }, { new: true }).lean();
   }
   if (!upd) throw httpErr(409, 'Someone else just updated this order. Refresh to see its latest status.');
   return { orderId, assignee: upd.assignee && upd.assignee.id ? { id: upd.assignee.id, name: upd.assignee.name, auto: false } : null };

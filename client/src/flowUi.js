@@ -34,7 +34,19 @@ export const fmtWhen = (d) => (d ? new Date(d).toLocaleString('en-IN', { day: 'n
 export const fmtTime = (d) => (d ? new Date(d).toLocaleTimeString('en-IN', { hour: 'numeric', minute: '2-digit', hour12: true, timeZone: 'Asia/Kolkata' }) : '—');
 export const grams = (g) => (g == null ? '—' : g >= 1000 ? `${(g / 1000).toFixed(g % 1000 === 0 ? 0 : 2)} kg` : `${g} g`);
 
-export const ROLE_LABEL = { admin: 'Admin', confirmation: 'Confirmation team', packing: 'Packing team' };
+export const ROLE_LABEL = { admin: 'Admin', confirmation: 'Confirmation team', packing: 'Dispatch team' };
+export const ROLE_ORDER = ['admin', 'confirmation', 'packing'];
+
+// One login can hold several roles (for example Confirmation + Dispatch, without being an admin). `roles` is the list; `role` is the primary one on older data.
+export const rolesOf = (u) => {
+  if (!u) return [];
+  const list = Array.isArray(u.roles) && u.roles.length ? u.roles : (u.role ? [u.role] : []);
+  return ROLE_ORDER.filter((r) => list.includes(r));
+};
+export const hasRole = (u, ...want) => rolesOf(u).some((r) => want.includes(r));
+export const isAdmin = (u) => rolesOf(u).includes('admin');
+// "Confirmation team + Dispatch team"
+export const roleSummary = (u) => rolesOf(u).map((r) => ROLE_LABEL[r]).join(' + ') || '—';
 
 // A ticking clock for live timers. One interval per component that uses it; paused while the tab is hidden.
 export function useNow(intervalMs = 1000) {
