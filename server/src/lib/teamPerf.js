@@ -8,6 +8,7 @@
 const { DAY, fmtDate, istParts } = require('./istTime');
 const DP = require('./dispatch');
 const DK = require('./desk');
+const { rolesOf, isAdmin } = require('./staffAuth');
 
 const HOUR = 3600 * 1000;
 const CALL_KINDS = ['dnp', 'confirm', 'partial', 'cancel'];
@@ -176,7 +177,7 @@ const blankTasks = () => ({ user: null, assigned: 0, onTime: 0, late: 0, missed:
 function taskBook(events, assigns, open, range, resolve, dispatchConfig, now) {
   const by = new Map(); const nobody = { missed: 0, toDo: 0 };
   // Admins are not scored: nothing they do or hold counts as a task for anyone (get() returns null for them).
-  const get = (id, name) => { const u = resolve(id, name); if (u.role === 'admin') return null; if (!by.has(u.id)) by.set(u.id, { ...blankTasks(), user: u }); return by.get(u.id); };
+  const get = (id, name) => { const u = resolve(id, name); if (isAdmin(u)) return null; if (!by.has(u.id)) by.set(u.id, { ...blankTasks(), user: u }); return by.get(u.id); };
   for (const e of events) {
     if (e.due == null || !inRange(e.due, range)) continue;
     const j = judge(e);
@@ -217,24 +218,27 @@ function teamTasks(book) {
 // ------------------------------------------------------------------------------------------------ restricted view
 // A confirmation or packing login sees the same page as an admin, but only their OWN numbers, and only for their own kind of work.
 // Everything is cut down BEFORE anything is counted, so no other person's name or figure can reach the screen.
+// A person on both teams (Confirmation + Dispatch) sees both kinds of work: the lists below are joined across all their roles.
 const ROLE_KINDS = { confirmation: CALL_KINDS, packing: DISPATCH_KINDS };
 const ROLE_STAGES = { confirmation: ['confirm', 'pending'], packing: ['dispatch'] };
+const joinFor = (viewer, table) => [...new Set(rolesOf(viewer).flatMap((r) => table[r] || []))];
 function scopeInput(viewer, input) {
   const resolve = makeResolver(input.users);
   const mine = (id, name) => resolve(id, name).id === String(viewer.id);
-  const kinds = ROLE_KINDS[viewer.role] || [];          // an unknown role sees nothing
-  const stages = ROLE_STAGES[viewer.role] || [];
-  const me = input.users.find((u) => String(u.id) === String(viewer.id)) || { id: String(viewer.id), name: viewer.name, role: viewer.role, active: true };
+  const kinds = joinFor(viewer, ROLE_KINDS);            // an unknown role sees nothing
+  const stages = joinFor(viewer, ROLE_STAGES);
+  const callsToo = rolesOf(viewer).includes('confirmation');
+  const me = input.users.find((u) => String(u.id) === String(viewer.id)) || { id: String(viewer.id), name: viewer.name, role: viewer.role, roles: rolesOf(viewer), active: true };
   return {
     users: [me],
     desk: {
       events: input.desk.events.filter((e) => kinds.includes(e.kind) && mine(e.id, e.name)),
-      decisions: viewer.role === 'confirmation' ? input.desk.decisions.filter((x) => mine(x.id, x.name)) : [],
+      decisions: callsToo ? input.desk.decisions.filter((x) => mine(x.id, x.name)) : [],
       assigns: (input.desk.assigns || []).filter((a) => mine(null, a.name) && (!a.stage || stages.includes(a.stage))),
     },
     flow: {
       events: input.flow.events.filter((e) => kinds.includes(e.kind) && mine(e.id, e.name)),
-      decisions: viewer.role === 'confirmation' ? input.flow.decisions.filter((x) => mine(x.id, x.name)) : [],
+      decisions: callsToo ? input.flow.decisions.filter((x) => mine(x.id, x.name)) : [],
       assigns: [],
     },
     open: (input.open || []).filter((d) => stages.includes(d.stage) && d.assignee && d.assignee.id && String(d.assignee.id) === String(viewer.id)),
@@ -244,7 +248,7 @@ function scopeInput(viewer, input) {
 // ------------------------------------------------------------------------------------------------ the whole report
 // input: { range:{start,end}, prev:{start,end}|null, users, desk:{events,decisions}, flow:{events,decisions}, totals: Map(orderId -> total), open: [DeskOrder], dispatchConfig, now }
 function build(rawInput) {
-  const viewer = rawInput.viewer && rawInput.viewer.role !== 'admin' ? rawInput.viewer : null; // admins (no viewer) see everyone
+  const viewer = rawInput.viewer && !isAdmin(rawInput.viewer) ? rawInput.viewer : null; // admins (no viewer) see everyone
   const input = viewer ? { ...rawInput, ...scopeInput(viewer, rawInput) } : rawInput;
   const { range, prev, users, totals = new Map(), open = [], dispatchConfig = DP.DEFAULT_DISPATCH_CONFIG, now = new Date() } = input;
   const events = [...input.desk.events, ...input.flow.events];
@@ -283,7 +287,7 @@ function build(rawInput) {
     const lateTotal = c.late.slip + c.late.packed + c.late.handover;
     const w = work.get(user.id) || { confirm: 0, pending: 0, dispatch: 0, overdue: 0 };
     return {
-      id: user.id, name: user.name, role: user.role, active: user.active !== false, former: !!user.former,
+      id: user.id, name: user.name, role: user.role, roles: rolesOf(user), active: user.active !== false, former: !!user.former,
       dnp: c.dnp, confirmed: c.confirm, partial: c.partial, cancelled: c.cancel, slip: c.slip, packed: c.packed, handover: c.handover,
       calls: callsOf(c), dispatchWork: dispatchOf(c), total: totalOf(c),
       decisions: decisionsN, winRate: ratio(c.confirm + c.partial, decisionsN),
@@ -322,7 +326,7 @@ function build(rawInput) {
   const team = teamFrom(cur);
   const teamPrev = prev ? teamFrom(old) : null;
   team.tasks = teamTasks(taskCur); team.tasksPrev = taskOld ? teamTasks(taskOld) : null;
-  team.members = people.filter((p) => p.active && p.role !== 'admin').length;
+  team.members = people.filter((p) => p.active && !isAdmin(p)).length;
 
   // ---- trend: one point per hour (single day) or per day
   const trend = plan.keys.map((k) => ({ key: k, label: plan.label(k), won: 0, dnp: 0, cancelled: 0, dispatch: 0 }));
@@ -354,13 +358,13 @@ function build(rawInput) {
   if (packer) highlights.push({ key: 'packer', title: 'Most orders handed over', name: packer.name, value: `${packer.handover} handed to courier`, note: `${packer.packed} packed · ${packer.slip} slips` });
   const steady = top(people, (p) => p.activeDays, 2);
   if (steady && range.end.getTime() - range.start.getTime() > DAY) highlights.push({ key: 'steady', title: 'Most consistent', name: steady.name, value: `${steady.activeDays} active days`, note: null });
-  const idle = people.filter((p) => p.active && p.role !== 'admin' && p.total === 0);
+  const idle = people.filter((p) => p.active && !isAdmin(p) && p.total === 0);
   const stuck = people.filter((p) => p.open.overdue > 0).sort((a, b) => b.open.overdue - a.open.overdue);
 
   return {
-    scope: viewer ? { mine: true, role: viewer.role, id: String(viewer.id) } : { mine: false },
+    scope: viewer ? { mine: true, role: viewer.role, roles: rolesOf(viewer), id: String(viewer.id) } : { mine: false },
     bucket: plan.bucket, team, teamPrev, people, trend, hours,
-    highlights: viewer ? [] : highlights, idle: viewer ? [] : idle.map((p) => ({ id: p.id, name: p.name, role: p.role })),
+    highlights: viewer ? [] : highlights, idle: viewer ? [] : idle.map((p) => ({ id: p.id, name: p.name, role: p.role, roles: p.roles })),
     attention: stuck.map((p) => ({ id: p.id, name: p.name, overdue: p.open.overdue, assigned: p.open.assigned })),
     workload: { open: openTotal, overdue: overdueTotal, unassigned },
     activeCount: doers.length,

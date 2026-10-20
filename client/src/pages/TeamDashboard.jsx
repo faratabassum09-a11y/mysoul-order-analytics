@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import { Bar, BarChart, CartesianGrid, Legend, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { useApi } from '../api.js';
 import { DeltaChip, Loading } from '../components.jsx';
-import { ROLE_LABEL, duration, fmtTime, fmtWhen, useAutoRefresh } from '../flowUi.js';
+import { duration, fmtTime, fmtWhen, hasRole, isAdmin, rolesOf, roleSummary, useAutoRefresh } from '../flowUi.js';
 import { inr, int, pct } from '../format.js';
 import { useStaff } from '../staff.jsx';
 
@@ -54,7 +54,9 @@ const initials = (n) => String(n || '?').trim().split(/\s+/).slice(0, 2).map((s)
 const HUES = ['#2a7f8e', '#6a55b3', '#c4661f', '#3b4a96', '#1c7c6c', '#a0507a', '#7a6a1f'];
 const hueOf = (s) => HUES[[...String(s)].reduce((a, c) => a + c.charCodeAt(0), 0) % HUES.length];
 const Avatar = ({ p }) => <span className="tp-av" style={{ background: hueOf(p.id) }} aria-hidden="true">{initials(p.name)}</span>;
-const Role = ({ r }) => (r ? <span className={`tp-role ${r}`}>{r === 'confirmation' ? 'Confirmation' : r === 'packing' ? 'Packing' : 'Admin'}</span> : <span className="tp-role none">Former member</span>);
+const ROLE_SHORT = { confirmation: 'Confirmation', packing: 'Dispatch', admin: 'Admin' };
+// p: a person row. Someone on both teams shows "Confirmation + Dispatch".
+const Role = ({ p }) => { const rs = rolesOf(p); return rs.length ? <span className={`tp-role ${rs[0]}`}>{rs.map((r) => ROLE_SHORT[r]).join(' + ')}</span> : <span className="tp-role none">Former member</span>; };
 const ms = (v) => (v == null ? '—' : duration(v));
 
 function Kpi({ label, value, sub, chip, tone, hint }) {
@@ -120,7 +122,7 @@ function ScoreBar({ score, grade }) {
 
 function Scorecard({ data, compareLabel, mine }) {
   const tt = data.team.tasks; const tp = data.team.tasksPrev;
-  const rows = data.people.filter((p) => p.role !== 'admin' && (p.tasks.due > 0 || p.tasks.assigned > 0 || p.tasks.toDo > 0 || p.active))
+  const rows = data.people.filter((p) => !isAdmin(p) && (p.tasks.due > 0 || p.tasks.assigned > 0 || p.tasks.toDo > 0 || p.active))
     .sort((a, b) => (b.tasks.score ?? -1) - (a.tasks.score ?? -1) || b.tasks.due - a.tasks.due || a.name.localeCompare(b.name));
   return (
     <>
@@ -140,7 +142,7 @@ function Scorecard({ data, compareLabel, mine }) {
         <tbody>
           {rows.length === 0 ? <tr><td colSpan={9} className="muted">No tasks in this period.</td></tr> : rows.map((p) => (
             <tr key={p.id}>
-              <td><span className="who"><Avatar p={p} /><span><b>{p.name}</b><Role r={p.role} /></span></span></td>
+              <td><span className="who"><Avatar p={p} /><span><b>{p.name}</b><Role p={p} /></span></span></td>
               <td><ScoreBar score={p.tasks.score} grade={p.tasks.grade} /><Grade g={p.tasks.grade} /></td>
               <td className="num">{int(p.tasks.assigned)}</td>
               <td className="num">{int(p.tasks.due)}</td>
@@ -173,8 +175,7 @@ function Scorecard({ data, compareLabel, mine }) {
 // ---------------------------------------------------------------- the page
 export default function TeamDashboard() {
   const { user } = useStaff();
-  const mine = !!user && user.role !== 'admin'; // confirmation / packing logins: the server sends only their own numbers
-  const myRole = user && user.role;
+  const mine = !!user && !isAdmin(user); // confirmation / packing logins: the server sends only their own numbers
   const f = useTeamFilters();
   const { data, error, loading, reload } = useApi('/desk/team-performance', f.params, f.ready);
   const [open, setOpen] = useState(null);
@@ -184,10 +185,10 @@ export default function TeamDashboard() {
 
   const t = data && data.team; const pv = data && data.teamPrev;
   const maxTotal = data ? Math.max(1, ...data.people.map((p) => p.total)) : 1;
-  const calls = data ? data.people.filter((p) => p.calls > 0 || p.role === 'confirmation') : [];
-  const packers = data ? data.people.filter((p) => p.dispatchWork > 0 || p.role === 'packing') : [];
-  const showCalls = !mine || myRole === 'confirmation';
-  const showDispatch = !mine || myRole === 'packing';
+  const calls = data ? data.people.filter((p) => p.calls > 0 || hasRole(p, 'confirmation')) : [];
+  const packers = data ? data.people.filter((p) => p.dispatchWork > 0 || hasRole(p, 'packing')) : [];
+  const showCalls = !mine || hasRole(user, 'confirmation');
+  const showDispatch = !mine || hasRole(user, 'packing');
   const hourly = data ? data.hours.map((n, h) => ({ label: `${((h + 11) % 12) + 1}${h < 12 ? 'am' : 'pm'}`, n })) : [];
   const compareLabel = data && data.range.prev ? `vs ${data.range.prev.start === data.range.prev.end ? data.range.prev.start : `${data.range.prev.start} to ${data.range.prev.end}`}` : '';
 
@@ -284,7 +285,7 @@ export default function TeamDashboard() {
                   <div key={p.id} className={`tp-row ${open === p.id ? 'open' : ''} ${p.total === 0 ? 'zero' : ''}`}>
                     <button className="tp-line" onClick={() => setOpen(open === p.id ? null : p.id)} aria-expanded={open === p.id}>
                       <span className="rank">{mine ? '' : p.total > 0 ? i + 1 : '–'}</span>
-                      <span className="who"><Avatar p={p} /><span><b>{p.name}</b><Role r={p.role} /></span></span>
+                      <span className="who"><Avatar p={p} /><span><b>{p.name}</b><Role p={p} /></span></span>
                       <span className="bar" title={`${p.total} actions`}>
                         <span className="track"><i style={{ width: `${(p.total / maxTotal) * 100}%`, background: hueOf(p.id) }} /></span>
                         <b>{int(p.total)}</b> <small>actions</small> <Delta cur={p.total} prev={data.teamPrev ? p.prev.total : null} />
@@ -346,7 +347,7 @@ export default function TeamDashboard() {
                   {data.people.filter((p) => p.open.assigned > 0).length === 0
                     ? <tr><td colSpan={6} className="muted">{mine ? 'Nothing is assigned to you right now.' : 'Nothing is assigned to anyone right now. Turn on assignment in the Shopify desk settings to share orders out.'}</td></tr>
                     : data.people.filter((p) => p.open.assigned > 0).sort((a, b) => b.open.overdue - a.open.overdue || b.open.assigned - a.open.assigned).map((p) => (
-                      <tr key={p.id}><td><b>{p.name}</b></td><td>{ROLE_LABEL[p.role] || '—'}</td><td className="num">{int(p.open.confirm)}</td><td className="num">{int(p.open.pending)}</td><td className="num">{int(p.open.dispatch)}</td><td className={`num ${p.open.overdue ? 'bad-text' : ''}`}>{int(p.open.overdue)}</td></tr>
+                      <tr key={p.id}><td><b>{p.name}</b></td><td>{roleSummary(p)}</td><td className="num">{int(p.open.confirm)}</td><td className="num">{int(p.open.pending)}</td><td className="num">{int(p.open.dispatch)}</td><td className={`num ${p.open.overdue ? 'bad-text' : ''}`}>{int(p.open.overdue)}</td></tr>
                     ))}
                 </tbody>
               </table></div>

@@ -2,6 +2,26 @@
 const crypto = require('crypto');
 
 const ROLES = ['admin', 'confirmation', 'packing'];
+
+// A login holds one or more roles, so one person can be on the Confirmation team AND the Dispatch (packing) team
+// without being an admin. `roles` is the truth; `role` is kept as the person's primary role for old data and labels.
+// Admin already covers everything, so an admin is stored as just ['admin'].
+function rolesOf(u) {
+  if (!u) return [];
+  const list = Array.isArray(u.roles) && u.roles.length ? u.roles : (u.role ? [u.role] : []);
+  return ROLES.filter((r) => list.includes(r));
+}
+const hasRole = (u, ...want) => rolesOf(u).some((r) => want.includes(r));
+const isAdmin = (u) => rolesOf(u).includes('admin');
+const primaryRole = (roles) => ROLES.find((r) => (roles || []).includes(r)) || null;
+// Accepts an array of roles (or a single role string). Returns { roles, role } ready to store, or throws a plain message.
+function normaliseRoles(input) {
+  const raw = Array.isArray(input) ? input : (input ? [input] : []);
+  if (!raw.length) throw new Error('Pick at least one role');
+  for (const r of raw) if (!ROLES.includes(r)) throw new Error('Pick a role');
+  const roles = raw.includes('admin') ? ['admin'] : ROLES.filter((r) => raw.includes(r));
+  return { roles, role: primaryRole(roles) };
+}
 const TOKEN_TTL_MS = 12 * 3600 * 1000; // one shift; people sign in again next day
 
 function hashPassword(password) {
@@ -49,4 +69,4 @@ function makeLimiter(max = 5, windowMs = 10 * 60 * 1000) {
   };
 }
 
-module.exports = { ROLES, TOKEN_TTL_MS, hashPassword, verifyPassword, signToken, verifyToken, USERNAME_RE, normaliseUsername, passwordProblem, makeLimiter };
+module.exports = { ROLES, rolesOf, hasRole, isAdmin, primaryRole, normaliseRoles, TOKEN_TTL_MS, hashPassword, verifyPassword, signToken, verifyToken, USERNAME_RE, normaliseUsername, passwordProblem, makeLimiter };

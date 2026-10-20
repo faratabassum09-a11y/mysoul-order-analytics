@@ -5,6 +5,7 @@ const { resolveWindow } = require('../lib/windows');
 const { fmtDate } = require('../lib/istTime');
 const T = require('../lib/teamPerf');
 const desk = require('./deskService');
+const { rolesOf } = require('../lib/staffAuth');
 
 // viewer: the signed-in non-admin ({ id, name, role }); null for an admin, who sees everyone.
 async function report(q = {}, now = new Date(), viewer = null) {
@@ -17,7 +18,7 @@ async function report(q = {}, now = new Date(), viewer = null) {
   const sinceFrom = { $gte: from }; // work that was due in the period may have been done after it ended
 
   const [users, deskDocs, flowEvents, flowDecisions, open, dispatchConfig, deskConfig] = await Promise.all([
-    StaffUser.find().select('name role active').lean(),
+    StaffUser.find().select('name role roles active').lean(),
     DeskOrder.find({ $or: [{ 'log.at': sinceFrom }, { 'dq.slip.at': sinceFrom }, { 'dq.packed.at': sinceFrom }, { 'dq.handover.at': sinceFrom }] }).select('orderId orderAt log dq').lean(),
     FlowEvent.find({ at: span, stage: { $in: ['confirm', 'dispatch'] } }).select('orderId at byId byName action meta').lean(),
     OrderFlow.find({ decidedAt: span }).select('orderId orderAt decidedAt decidedById decidedByName').lean(),
@@ -33,7 +34,7 @@ async function report(q = {}, now = new Date(), viewer = null) {
 
   const out = T.build({
     range: w, prev: w.prev,
-    users: users.map((u) => ({ id: String(u._id), name: u.name, role: u.role, active: u.active !== false })),
+    users: users.map((u) => ({ id: String(u._id), name: u.name, role: u.role, roles: rolesOf(u), active: u.active !== false })),
     desk: fromDesk, flow: T.fromFlow(flowEvents, flowDecisions), totals, open, dispatchConfig, now, viewer,
   });
   return {

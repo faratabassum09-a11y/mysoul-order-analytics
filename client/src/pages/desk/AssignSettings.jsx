@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { api, useApi } from '../../api.js';
 import { useToast } from '../../deskUi.jsx';
+import { hasRole, isAdmin, rolesOf } from '../../flowUi.js';
 import { notifyDesk, useLabels } from './shared.jsx';
 
 // Settings, Team assignment: for every column of the three queues choose Off / Manual / Auto, who is on it and each person's share.
@@ -24,7 +25,7 @@ export default function AssignSettings() {
   if (!cfg) return <div className="sd-set-card" id="assign"><h2>Team assignment</h2><p className="cap">Loading…</p></div>;
   const team = data.team; const nameOf = (id) => (team.find((p) => p.id === id) || {}).name || 'Removed person';
   const setSlot = (k, patch) => setCfg((c) => ({ ...c, slots: { ...c.slots, [k]: { ...c.slots[k], ...patch } } }));
-  const eligible = (kind) => team.filter((p) => p.role === 'admin' || p.role === kind);
+  const eligible = (kind) => team.filter((p) => isAdmin(p) || hasRole(p, kind));
   const toggle = (k, id) => { const cur = cfg.slots[k].members; setSlot(k, { members: cur.some((m) => m.id === id) ? cur.filter((m) => m.id !== id) : [...cur, { id, weight: 1, on: true }] }); };
   const patchMember = (k, id, patch) => setSlot(k, { members: cfg.slots[k].members.map((m) => (m.id === id ? { ...m, ...patch } : m)) });
   const copyTo = (group, from) => setCfg((c) => { const src = c.slots[from]; const slots = { ...c.slots }; group.slots.forEach(([k]) => { slots[k] = { mode: src.mode, members: src.members.map((m) => ({ ...m })) }; }); return { ...c, slots }; });
@@ -68,7 +69,7 @@ export default function AssignSettings() {
                         const m = s.members.find((x) => x.id === p.id);
                         return (
                           <div key={p.id} className={`asg-person ${m ? 'in' : ''} ${m && !m.on ? 'away' : ''}`}>
-                            <label className="asg-pick"><input type="checkbox" checked={!!m} onChange={() => toggle(k, p.id)} /> <span>{p.name}{p.role === 'admin' ? <em> · admin</em> : null}</span></label>
+                            <label className="asg-pick"><input type="checkbox" checked={!!m} onChange={() => toggle(k, p.id)} /> <span>{p.name}{isAdmin(p) ? <em> · admin</em> : rolesOf(p).length > 1 ? <em> · both teams</em> : null}</span></label>
                             {m && (
                               <>
                                 {s.mode === 'auto' && <label className="asg-share">Share <input type="number" min="1" max="100" step="1" value={m.weight} onChange={(e) => patchMember(k, p.id, { weight: e.target.value })} /></label>}

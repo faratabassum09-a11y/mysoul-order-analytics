@@ -3,6 +3,7 @@ import { NavLink, Navigate, Route, Routes } from 'react-router-dom';
 import { api } from '../../api.js';
 import { useToast } from '../../deskUi.jsx';
 import { useStaff } from '../../staff.jsx';
+import { hasRole, isAdmin, rolesOf } from '../../flowUi.js';
 import { LabelsProvider, notifyDesk, useDeskCounts, useLabels } from './shared.jsx';
 import DeskOverview from './DeskOverview.jsx';
 import DeskOrders from './DeskOrders.jsx';
@@ -14,7 +15,7 @@ import TransitOrders from './TransitOrders.jsx';
 import DeskSettings from './DeskSettings.jsx';
 
 // Tabs, in the order the team works an order: new orders, confirm calls, pending calls, dispatch (slip, packed, handover), in transit, then the side lists.
-function tabsFor(role, c, L) {
+function tabsFor(user, c, L) {
   const n = (v) => (v ? v : null);
   const ALL = ['admin', 'confirmation', 'packing'];
   const all = [
@@ -29,10 +30,12 @@ function tabsFor(role, c, L) {
     ['cancelled', L('tabCancelled'), c && n(c.cancelled), ['admin', 'confirmation']],
     ['settings', L('tabSettings'), null, ['admin']],
   ];
-  return all.filter((t) => t[3].includes(role));
+  const mine = rolesOf(user);
+  return all.filter((t) => t[3].some((r) => mine.includes(r)));
 }
 
-export const deskHome = (user) => (user && user.role === 'packing' ? '/shopify-desk/dispatch' : user && user.role === 'confirmation' ? '/shopify-desk/confirm' : '/shopify-desk/overview');
+// Where a person lands: admins on the Overview, otherwise their first team's queue (Confirmation first, then Dispatch).
+export const deskHome = (user) => (isAdmin(user) ? '/shopify-desk/overview' : hasRole(user, 'confirmation') ? '/shopify-desk/confirm' : hasRole(user, 'packing') ? '/shopify-desk/dispatch' : '/shopify-desk/overview');
 
 function Refresh() {
   const [busy, setBusy] = useState(false);
@@ -51,7 +54,7 @@ function DeskInner() {
   const { user } = useStaff();
   const { L } = useLabels();
   const counts = useDeskCounts();
-  const tabs = tabsFor(user.role, counts, L);
+  const tabs = tabsFor(user, counts, L);
   const allowed = new Set(tabs.map((t) => t[0]));
   const guard = (key, el) => (allowed.has(key) ? el : <Navigate to={deskHome(user)} replace />);
   return (

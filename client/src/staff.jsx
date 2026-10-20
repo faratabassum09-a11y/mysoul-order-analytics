@@ -1,5 +1,6 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import { api, getStaffToken, setStaffToken } from './api.js';
+import { hasRole, isAdmin } from './flowUi.js';
 
 // Who is signed in on this device. Each person has their own login; every action in the desks is stamped with it.
 const Ctx = createContext(null);
@@ -42,4 +43,4 @@ export function StaffProvider({ children }) {
 export const useStaff = () => useContext(Ctx);
 
 // What this device may do. The server enforces the same rules; this only decides which buttons to show.
-export const can = (user, what) => !!user && (user.role === 'admin' || user.role === what);
+export const can = (user, what) => !!user && (isAdmin(user) || hasRole(user, what));

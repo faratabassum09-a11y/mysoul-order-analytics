@@ -16,7 +16,7 @@ async function report(q = {}, staff) {
   const w = resolveWindow(q.window || 'this_month', new Date(), { from: q.from, to: q.to });
   const load = (r) => Order.find({ excluded: null, ...dateFilter(r) }).select(FIELDS).lean();
   const [cur, prev] = await Promise.all([load(w), w.prev ? load(w.prev) : null]);
-  const out = forRole({ range: rangeOut(w), current: computeMetrics(cur), previous: prev ? computeMetrics(prev) : null }, staff.role);
+  const out = forRole({ range: rangeOut(w), current: computeMetrics(cur), previous: prev ? computeMetrics(prev) : null }, staff);
   if (!out) throw Object.assign(new Error('Your role cannot see this.'), { status: 403 });
   return out;
 }

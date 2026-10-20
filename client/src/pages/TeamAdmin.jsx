@@ -1,7 +1,31 @@
 import React, { useEffect, useState } from 'react';
 import { api, useApi } from '../api.js';
 import { Loading } from '../components.jsx';
-import { fmtWhen, ROLE_LABEL } from '../flowUi.js';
+import { fmtWhen, rolesOf, ROLE_LABEL } from '../flowUi.js';
+
+// Tick the teams a person works in. Confirmation + Dispatch together is fine and is NOT admin access.
+// Ticking Admin covers everything (both teams are shown as included); unticking it leaves them on both teams.
+function RolePicker({ roles, onChange, name, disabled }) {
+  const admin = roles.includes('admin');
+  const has = (r) => admin || roles.includes(r);
+  const toggle = (r) => {
+    if (r === 'admin') return onChange(admin ? ['confirmation', 'packing'] : ['admin']);
+    const next = has(r) ? roles.filter((x) => x !== r) : [...roles, r];
+    if (next.length) onChange(next); // a person always keeps at least one role
+  };
+  return (
+    <div className="role-checks" role="group" aria-label={`Roles of ${name}`}>
+      {['confirmation', 'packing', 'admin'].map((r) => {
+        const locked = disabled || (r !== 'admin' && admin) || (r !== 'admin' && has(r) && roles.length === 1);
+        return (
+          <label key={r} className={r === 'admin' ? 'role-admin' : ''}>
+            <input type="checkbox" checked={has(r)} disabled={locked} onChange={() => toggle(r)} /> {ROLE_LABEL[r]}
+          </label>
+        );
+      })}
+    </div>
+  );
+}
 
 function UserRow({ u, onChanged, setMsg }) {
   const [reset, setReset] = useState(false);
@@ -11,9 +35,7 @@ function UserRow({ u, onChanged, setMsg }) {
     <tr>
       <td><b>{u.name}</b><div className="muted">{u.username}</div></td>
       <td>
-        <select value={u.role} aria-label={`Role of ${u.name}`} onChange={(e) => act(() => api.patch(`/staff/users/${u.id}`, { role: e.target.value }), `${u.name} is now ${ROLE_LABEL[e.target.value]}.`)}>
-          {Object.entries(ROLE_LABEL).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
-        </select>
+        <RolePicker roles={rolesOf(u)} name={u.name} onChange={(roles) => act(() => api.patch(`/staff/users/${u.id}`, { roles }), `${u.name} is now ${roles.includes('admin') ? 'Admin' : roles.map((r) => ROLE_LABEL[r]).join(' + ')}.`)} />
       </td>
       <td>{u.active ? <span className="tag Delivered">Active</span> : <span className="tag RTO">Switched off</span>}{u.mustChangePassword && <div className="muted">must set own password</div>}</td>
       <td className="muted">{u.lastLoginAt ? fmtWhen(u.lastLoginAt) : 'Never'}</td>
@@ -37,7 +59,7 @@ function UserRow({ u, onChanged, setMsg }) {
 
 export function TeamCard() {
   const { data, error, loading, reload } = useApi('/staff/users');
-  const [form, setForm] = useState({ name: '', username: '', role: 'confirmation', password: '' });
+  const [form, setForm] = useState({ name: '', username: '', roles: ['confirmation'], password: '' });
   const [msg, setMsg] = useState(null);
   const [busy, setBusy] = useState(false);
   const set = (k, v) => setForm((f) => ({ ...f, [k]: v }));
@@ -46,7 +68,7 @@ export function TeamCard() {
     try {
       await api.post('/staff/users', form);
       setMsg({ ok: true, text: `${form.name} added. Give them the username and this temporary password; they set their own at first sign-in.` });
-      setForm({ name: '', username: '', role: 'confirmation', password: '' }); reload();
+      setForm({ name: '', username: '', roles: ['confirmation'], password: '' }); reload();
     } catch (e) { setMsg({ ok: false, text: e.message }); } finally { setBusy(false); }
   };
   return (
@@ -58,16 +80,16 @@ export function TeamCard() {
           <>
             {data.users.length > 0 && (
               <div className="tablewrap"><table>
-                <thead><tr><th>Person</th><th>Role</th><th>Status</th><th>Last sign-in</th><th /></tr></thead>
+                <thead><tr><th>Person</th><th>Roles</th><th>Status</th><th>Last sign-in</th><th /></tr></thead>
                 <tbody>{data.users.map((u) => <UserRow key={u.id} u={u} onChanged={reload} setMsg={setMsg} />)}</tbody>
               </table></div>
             )}
-            {data.users.length === 0 && <div className="banner warn">No one has a login yet. Create the first admin below, then add your confirmation and packing team.</div>}
+            {data.users.length === 0 && <div className="banner warn">No one has a login yet. Create the first admin below, then add your confirmation and dispatch team.</div>}
             <h2 style={{ marginTop: 16 }}>Add a person</h2>
             <div className="bucket" style={{ gridTemplateColumns: '1fr 1fr' }}>
               <input type="text" value={form.name} placeholder="Full name" onChange={(e) => set('name', e.target.value)} />
               <input type="text" value={form.username} placeholder="Username, e.g. asha.k" autoCapitalize="none" onChange={(e) => set('username', e.target.value)} />
-              <select value={form.role} onChange={(e) => set('role', e.target.value)}>{Object.entries(ROLE_LABEL).map(([k, l]) => <option key={k} value={k}>{l}</option>)}</select>
+              <RolePicker roles={form.roles} name="the new person" onChange={(roles) => set('roles', roles)} />
               <input type="text" value={form.password} placeholder="Temporary password (8+ characters)" autoComplete="off" onChange={(e) => set('password', e.target.value)} />
             </div>
             <div className="filters"><button className="btn" disabled={busy || !form.name || !form.username || form.password.length < 8} onClick={add}>{busy ? 'Adding…' : 'Add person'}</button></div>

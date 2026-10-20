@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useApi } from '../api.js';
 import { useStaff } from '../staff.jsx';
+import { isAdmin } from '../flowUi.js';
 import { useFilters } from '../filters.jsx';
 import { FilterBar, Funnel, KpiCard, Loading, MixCard, ModeTabs } from '../components.jsx';
 import { KPIS } from '../format.js';
@@ -10,7 +11,7 @@ import TeamPerformance from './TeamPerformance.jsx';
 export default function Overview() {
   const f = useFilters();
   const { user } = useStaff();
-  const team = !!user && user.role !== 'admin'; // confirmation / packing: same layout, only their own rates, no money
+  const team = !!user && !isAdmin(user); // confirmation / packing: same layout, only their own rates, no money
   const { data, error, loading } = useApi(team ? '/desk/my-overview' : '/metrics', f.params, f.ready);
   const [mode, setMode] = useState('All');
   const empty = data && data.current.All.total === 0;

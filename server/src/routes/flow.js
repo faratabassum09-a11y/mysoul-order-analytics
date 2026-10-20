@@ -20,7 +20,7 @@ async function secret() {
   return secretCache;
 }
 
-const publicUser = (u) => ({ id: String(u._id), username: u.username, name: u.name, role: u.role, active: u.active, mustChangePassword: !!u.mustChangePassword, lastLoginAt: u.lastLoginAt });
+const publicUser = (u) => ({ id: String(u._id), username: u.username, name: u.name, role: u.role, roles: A.rolesOf(u), active: u.active, mustChangePassword: !!u.mustChangePassword, lastLoginAt: u.lastLoginAt });
 
 // Who is calling? A signed-in person (token) is checked against the database on every request, so switching someone off works at once.
 async function staffFromReq(req) {
@@ -30,7 +30,7 @@ async function staffFromReq(req) {
   if (!p) return null;
   const u = await StaffUser.findById(p.uid).lean();
   if (!u || !u.active || (u.tokenVersion || 0) !== p.v) return null;
-  return { id: String(u._id), name: u.name, role: u.role, username: u.username, mustChangePassword: !!u.mustChangePassword };
+  return { id: String(u._id), name: u.name, role: u.role, roles: A.rolesOf(u), username: u.username, mustChangePassword: !!u.mustChangePassword };
 }
 
 // Every caller must be a signed-in team member. There is no shared key any more.
@@ -42,10 +42,10 @@ const auth = wrap(async (req, res, next) => {
 const need = (...roles) => (req, res, next) => {
   if (!req.staff) return res.status(403).json({ error: 'Sign in with your own team login to act on orders.' });
   if (req.staff.mustChangePassword) return res.status(403).json({ error: 'Set your own password first.', code: 'change_password' });
-  if (req.staff.role === 'admin' || roles.includes(req.staff.role)) return next();
+  if (A.isAdmin(req.staff) || A.hasRole(req.staff, ...roles)) return next();
   res.status(403).json({ error: 'Your role cannot do this.' });
 };
-const dashboardOnly = (req, res, next) => (req.staff && req.staff.role === 'admin' && !req.staff.mustChangePassword ? next() : res.status(403).json({ error: 'Admins only' }));
+const dashboardOnly = (req, res, next) => (req.staff && A.isAdmin(req.staff) && !req.staff.mustChangePassword ? next() : res.status(403).json({ error: 'Admins only' }));
 
 const orderIdOf = (req) => { const n = Number(req.params.orderId); if (!Number.isInteger(n) || n <= 0) throw httpErr(400, 'Bad order number'); return n; };
 
@@ -86,7 +86,7 @@ staff.post('/password', auth, wrap(async (req, res) => {
 // Admin gate for team management. Only an admin can manage the team; the very first admin can be created openly only while no admin exists yet.
 const manageAuth = wrap(async (req, res, next) => {
   req.staff = await staffFromReq(req);
-  if (req.staff && req.staff.role === 'admin') return next();
+  if (req.staff && A.isAdmin(req.staff)) return next();
   const haveAdmin = (await StaffUser.countDocuments({ role: 'admin', active: true })) > 0;
   if (!haveAdmin) return next();
   res.status(403).json({ error: 'Only an admin can manage the team.' });
@@ -100,19 +100,20 @@ staff.post('/users', manageAuth, wrap(async (req, res) => {
   const b = req.body || {};
   const username = A.normaliseUsername(b.username);
   if (!A.USERNAME_RE.test(username)) throw httpErr(400, 'Username: 3 to 32 letters, digits, dot, dash or underscore.');
-  if (!A.ROLES.includes(b.role)) throw httpErr(400, 'Pick a role');
+  let picked;
+  try { picked = A.normaliseRoles(b.roles !== undefined ? b.roles : b.role); } catch (e) { throw httpErr(400, e.message); }
   const name = String(b.name || '').trim();
   if (!name) throw httpErr(400, 'Enter the person\'s name');
   const bad = A.passwordProblem(b.password);
   if (bad) throw httpErr(400, bad);
   if (await StaffUser.exists({ username })) throw httpErr(409, 'That username is taken.');
-  const u = await StaffUser.create({ username, name, role: b.role, passwordHash: A.hashPassword(b.password), mustChangePassword: true, createdBy: req.staff ? req.staff.username : 'first-time setup' });
+  const u = await StaffUser.create({ username, name, role: picked.role, roles: picked.roles, passwordHash: A.hashPassword(b.password), mustChangePassword: true, createdBy: req.staff ? req.staff.username : 'first-time setup' });
   res.status(201).json({ user: publicUser(u) });
 }));
 
 const lastAdminGuard = async (target, change) => {
-  if (target.role !== 'admin' || !target.active) return;
-  const losing = (change.role && change.role !== 'admin') || change.active === false;
+  if (!A.isAdmin(target) || !target.active) return;
+  const losing = (change.roles && !change.roles.includes('admin')) || change.active === false;
   if (losing && (await StaffUser.countDocuments({ role: 'admin', active: true, _id: { $ne: target._id } })) === 0) throw httpErr(400, 'There must be at least one active admin.');
 };
 staff.patch('/users/:id', manageAuth, wrap(async (req, res) => {
@@ -121,11 +122,13 @@ staff.patch('/users/:id', manageAuth, wrap(async (req, res) => {
   const b = req.body || {};
   const change = {};
   if (b.name !== undefined) { const n = String(b.name).trim(); if (!n) throw httpErr(400, 'Name cannot be empty'); change.name = n; }
-  if (b.role !== undefined) { if (!A.ROLES.includes(b.role)) throw httpErr(400, 'Pick a role'); change.role = b.role; }
+  if (b.roles !== undefined || b.role !== undefined) {
+    try { const n = A.normaliseRoles(b.roles !== undefined ? b.roles : b.role); change.roles = n.roles; change.role = n.role; } catch (e) { throw httpErr(400, e.message); }
+  }
   if (b.active !== undefined) change.active = !!b.active;
   await lastAdminGuard(u, change);
   Object.assign(u, change);
-  if (change.active === false || change.role) u.tokenVersion = (u.tokenVersion || 0) + 1; // sign them out
+  if (change.active === false || change.roles) u.tokenVersion = (u.tokenVersion || 0) + 1; // sign them out
   await u.save();
   res.json({ user: publicUser(u) });
 }));

@@ -81,7 +81,7 @@ app.use('/api/desk', require('./routes/desk'));
 app.use('/api', async (req, res, next) => {
   try {
     const u = await teamRoutes.staffFromReq(req);
-    if (u && u.role === 'admin' && !u.mustChangePassword) return next();
+    if (u && require('./lib/staffAuth').isAdmin(u) && !u.mustChangePassword) return next();
   } catch (e) { /* fall through to 401 */ }
   res.status(401).json({ error: 'Sign in with your team login' });
 });

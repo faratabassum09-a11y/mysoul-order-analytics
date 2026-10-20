@@ -615,3 +615,9 @@ h2.sd-rowname .sd-rename { font-size: 16px; width: 16ch; }
 .tp-how { margin: 12px 0 4px; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 10px 14px; }
 .tp-how summary { cursor: pointer; font-weight: 700; } .tp-how ul { margin: 10px 0 2px; padding-left: 18px; display: grid; gap: 6px; color: var(--ink-2); }
 .tp-page .cap + .tp-kpis { margin-top: 12px; } .tp-page .tablewrap { margin-top: 12px; }
+
+/* Team logins: tick one or more roles per person */
+.role-checks { display: flex; flex-direction: column; gap: 4px; font-size: 13px; }
+.role-checks label { display: flex; align-items: center; gap: 6px; cursor: pointer; white-space: nowrap; }
+.role-checks input:disabled + * , .role-checks label:has(input:disabled) { cursor: default; opacity: .75; }
+.role-checks .role-admin { margin-top: 2px; padding-top: 4px; border-top: 1px solid var(--line, #e6e6e6); }
