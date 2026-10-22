@@ -645,3 +645,12 @@ h2.sd-rowname .sd-rename { font-size: 16px; width: 16ch; }
 .sd-actions .sd-call { flex: 1 1 0; }
 .dq-pick { width: 16px; height: 16px; }
 .dq-done { font-size: 13px; letter-spacing: 0; }
+
+/* ---- Cute compact dispatch card: assignee + Done on one line ---- */
+.dq-card { padding: 8px 10px; gap: 4px; border-radius: 12px; box-shadow: 0 1px 3px rgba(0,0,0,.06); }
+.dq-card .sd-amt { color: var(--ink); }
+.dq-row { display: flex; align-items: center; gap: 8px; margin-top: 2px; }
+.dq-row .sd-assign { flex: 1 1 auto; min-width: 0; justify-self: auto; }
+.dq-row .sd-assign select { max-width: 100%; width: 100%; }
+.dq-row .dq-done { flex: 0 0 auto; min-height: 30px; padding: 4px 18px; border-radius: 99px; font-size: 12px; font-weight: 800; letter-spacing: .04em; }
+.dq-card .sd-foot { line-height: 1.25; }
