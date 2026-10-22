@@ -52,13 +52,12 @@ function Card({ o, col, title, now, offset, canAct, busy, picked, onPick, onDone
 }
 
 // ---------------------------------------------------------------- forms
-// Order packed: the AWB and courier are read from Shipway and shown, not typed. The person only adds photos of the package (as many as needed).
+// Order packed: the AWB and courier are read from Shipway and shown, not typed. No photos are needed.
 function PackedSheet({ order: o, conf, show, onClose, onDone }) {
   const { L } = useLabels();
   const [live, setLive] = useState({ awb: o.dq.suggestedAwb || '', courier: o.dq.suggestedCourier || '', looking: true, allowManual: !!conf.allowManualAwb, shipwayConfigured: true });
   const [manual, setManual] = useState('');
-  const [files, setFiles] = useState([]); const [busy, setBusy] = useState(false);
-  const need = conf.stages.packed.requirePhoto;
+  const [busy, setBusy] = useState(false);
   const look = async () => { // ask Shipway again right now: the label may have been made a minute ago
     setLive((x) => ({ ...x, looking: true }));
     try { const r = await api.get(`/desk/dispatch/${o.orderId}/awb`); setLive({ awb: r.awb || '', courier: r.courier || '', looking: false, allowManual: r.allowManual, shipwayConfigured: r.shipwayConfigured }); }
@@ -71,12 +70,11 @@ function PackedSheet({ order: o, conf, show, onClose, onDone }) {
     try {
       const fd = new FormData();
       if (!live.awb) fd.append('awb', manual); // only used when Shipway has none
-      files.forEach((f) => fd.append('photos', f));
       await api.upload(`/desk/dispatch/${o.orderId}/packed`, fd);
       notifyDesk(); show(`${o.orderName} packed. It is now in ${L('stepHandover')}.`); onDone();
     } catch (e) { show(e.message, 'err'); if (e.status === 409 && !/AWB/.test(e.message)) onDone(); } finally { setBusy(false); }
   };
-  const ready = awb.replace(/\s/g, '').length >= 5 && (!need || files.length > 0);
+  const ready = awb.replace(/\s/g, '').length >= 5;
   return (
     <Sheet title={`${L('stepPacked')} · ${o.orderName}`} onClose={onClose}>
       <p className="muted">{o.name || 'No name'} · {inr(o.total)}</p>
@@ -89,8 +87,7 @@ function PackedSheet({ order: o, conf, show, onClose, onDone }) {
       {!live.awb && !live.looking && (live.allowManual
         ? <><label className="sheet-label" htmlFor="pk-awb">Type the AWB from the label (only because Shipway has none yet)</label><input id="pk-awb" type="text" autoCapitalize="characters" autoComplete="off" maxLength={40} value={manual} onChange={(e) => setManual(e.target.value)} placeholder="AWB number" /></>
         : <div className="banner">Wait for the shipment to be created in Shipway, then press “Fetch from Shipway again”.</div>)}
-      <MultiPhotoField label="Photos of the package" files={files} setFiles={setFiles} required={need} />
-      <button className="btn big good" disabled={busy || !ready} onClick={submit}>{busy ? 'Saving…' : !awb.trim() ? 'Waiting for the AWB from Shipway' : need && !files.length ? 'Add a photo to save' : `Save: ${L('stepPacked').toLowerCase()}`}</button>
+      <button className="btn big good" disabled={busy || !ready} onClick={submit}>{busy ? 'Saving…' : !awb.trim() ? 'Waiting for the AWB from Shipway' : `Save: ${L('stepPacked').toLowerCase()}`}</button>
     </Sheet>
   );
 }
