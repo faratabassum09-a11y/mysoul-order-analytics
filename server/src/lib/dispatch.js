@@ -24,7 +24,7 @@ const DEFAULT_DISPATCH_CONFIG = {
   allowManualAwb: true,
   stages: {
     slip: { dueTime: '12:00', dayOffset: 0 },
-    packed: { dueTime: '12:00', dayOffset: 0, requirePhoto: true },
+    packed: { dueTime: '12:00', dayOffset: 0, requirePhoto: false },
     handover: { dueTime: '18:00', dayOffset: 0, requirePhoto: true },
   },
 };
@@ -141,7 +141,7 @@ function packedDone(doc, input = {}, conf, who = { id: 'system', name: 'System' 
   const awb = cleanAwb(input.awb);
   const photoIds = idsOf(input.photoIds, input.photoId);
   if (photoIds.length > MAX_PHOTOS) throw httpErr(400, `Add at most ${MAX_PHOTOS} photos`);
-  if (conf.stages.packed.requirePhoto && !photoIds.length) throw httpErr(400, 'Add at least one photo of the packed package first');
+  // Order packed needs only the AWB: no package photo is required (photos are still accepted if sent).
   const courier = String(input.courier || '').trim().slice(0, 60);
   const t = timing(doc, conf, now);
   const dq = { ...(doc.dq || {}), step: 'handover', stepAt: now, packed: { at: now, byName: who.name, byId: who.id, awb, courier, photoId: photoIds[0] || null, photoIds, ...t } };
