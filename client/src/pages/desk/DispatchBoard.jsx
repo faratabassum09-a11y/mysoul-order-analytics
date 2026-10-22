@@ -44,9 +44,13 @@ function Card({ o, col, title, now, offset, canAct, busy, picked, onPick, onDone
       <div className="sd-who"><b>{o.name || 'No name'}</b>{o.city ? <span className="muted"> · {o.city}</span> : null}</div>
       <div className="sd-line"><span className="sd-amt">{inr(o.total)}</span><span className="sd-items" title={o.items}>{o.items || 'Items not loaded'}</span></div>
       {col.key !== 'slip' && (awb ? <div className="sd-foot"><span>AWB <b>{awb}</b>{courier ? ` · ${courier}` : ''}</span></div> : <div className="sd-foot warn"><span>AWB not in Shipway yet</span></div>)}
-      {o.collect > 0 && <div className="sd-foot"><span className="sd-collect-tag">Collect {inr(o.collect)}</span></div>}
-      {assign && <AssigneeRow o={o} {...assign} />}
-      {canAct && <div className="sd-actions"><button className="btn good dq-done" disabled={busy} onClick={() => onDone(o, col.key)}>{L('btnDone')}</button></div>}
+      {o.collect > 0 && Math.round(o.collect) !== Math.round(o.total || 0) && <div className="sd-foot"><span className="sd-collect-tag">Collect {inr(o.collect)}</span></div>}
+      {(assign || canAct) && (
+        <div className="dq-row">
+          {assign && <AssigneeRow o={o} {...assign} />}
+          {canAct && <button className="btn good dq-done" disabled={busy} onClick={() => onDone(o, col.key)}>{L('btnDone')}</button>}
+        </div>
+      )}
     </article>
   );
 }
