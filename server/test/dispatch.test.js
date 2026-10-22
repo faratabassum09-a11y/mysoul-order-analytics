@@ -92,12 +92,12 @@ test('steps cannot be skipped or repeated', () => {
   assert.throws(() => P.slipDone({ ...d, stage: 'cancelled' }, conf, who), /no longer in the dispatch queue/);
 });
 
-test('Order packed needs a valid AWB and, by default, a photo of the package', () => {
+test('Order packed needs a valid AWB and no photo', () => {
   let d = apply(doc(), P.slipDone(doc(), conf, who));
   assert.throws(() => P.packedDone(d, { awb: '', photoId: 'p' }, conf, who), /AWB/);
   assert.throws(() => P.packedDone(d, { awb: 'AB', photoId: 'p' }, conf, who), /5 to 40/);
   assert.throws(() => P.packedDone(d, { awb: 'AB 12$45', photoId: 'p' }, conf, who), /AWB/);
-  assert.throws(() => P.packedDone(d, { awb: 'ABC12345' }, conf, who), /photo of the packed package/);
+  assert.equal(P.packedDone(d, { awb: 'ABC12345' }, conf, who).set.dq.packed.awb, 'ABC12345'); // no photo needed
   const off = P.normaliseDispatchConfig({ stages: { packed: { requirePhoto: false } } }, conf);
   assert.equal(P.packedDone(d, { awb: 'abc12345' }, off, who).set.dq.packed.awb, 'ABC12345'); // upper-cased
 });
@@ -132,7 +132,7 @@ test('several package photos are kept, the first is also kept as photoId, and on
   let d = doc(); d = apply(d, P.slipDone(d, conf, who));
   const t = P.packedDone(d, { awb: 'ABC12345', courier: 'Delhivery', photoIds: ['p1', 'p2', 'p2', 'p3'] }, conf, who);
   assert.deepEqual(t.set.dq.packed.photoIds, ['p1', 'p2', 'p3']); assert.equal(t.set.dq.packed.photoId, 'p1');
-  assert.throws(() => P.packedDone(d, { awb: 'ABC12345', photoIds: [] }, conf, who), /at least one photo/);
+  assert.deepEqual(P.packedDone(d, { awb: 'ABC12345', photoIds: [] }, conf, who).set.dq.packed.photoIds, []);
   assert.throws(() => P.packedDone(d, { awb: 'ABC12345', photoIds: Array.from({ length: 11 }, (_, i) => `p${i}`) }, conf, who), /at most 10/);
   const off = P.normaliseDispatchConfig({ stages: { packed: { requirePhoto: false } } }, conf);
   assert.deepEqual(P.packedDone(d, { awb: 'ABC12345', photoIds: [] }, off, who).set.dq.packed.photoIds, []);
