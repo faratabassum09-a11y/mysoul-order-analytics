@@ -621,3 +621,27 @@ h2.sd-rowname .sd-rename { font-size: 16px; width: 16ch; }
 .role-checks label { display: flex; align-items: center; gap: 6px; cursor: pointer; white-space: nowrap; }
 .role-checks input:disabled + * , .role-checks label:has(input:disabled) { cursor: default; opacity: .75; }
 .role-checks .role-admin { margin-top: 2px; padding-top: 4px; border-top: 1px solid var(--line, #e6e6e6); }
+
+/* ---- Compact cards: Confirm queue, Pending and Dispatch queue (many fit on screen) ---- */
+.dq-board { gap: 10px; }
+.dq-col { padding: 8px; gap: 8px; border-radius: 12px; }
+.dq-cards { gap: 6px; }
+.sd-card { padding: 7px 10px; gap: 3px; border-left-width: 4px; border-radius: 9px; font-size: 13px; line-height: 1.3; }
+.sd-card header { gap: 6px; flex-wrap: nowrap; }
+.sd-id { gap: 6px; font-size: 13px; flex-wrap: nowrap; min-width: 0; }
+.sd-card .sd-id .link { font-size: 13px; font-weight: 700; }
+.sd-who { font-size: 13px; white-space: nowrap; }
+.sd-line { gap: 8px; font-size: 12px; }
+.sd-amt { font-size: 13px; }
+.sd-foot { font-size: 11px; gap: 2px 8px; }
+.sd-pay { font-size: 10px; padding: 0 5px; }
+.sd-due { font-size: 11px; padding: 1px 7px; }
+.sd-collect-tag { padding: 0 6px; }
+.sd-assign { font-size: 11px; padding: 1px 8px; }
+.sd-assign.take { min-height: 26px; }
+.sd-assign select { padding: 0; max-width: 140px; }
+.sd-actions { gap: 6px; flex-wrap: nowrap; }
+.sd-actions .btn { flex: 1 1 0; min-height: 30px; padding: 4px 8px; font-size: 12px; }
+.sd-actions .sd-call { flex: 1 1 0; }
+.dq-pick { width: 16px; height: 16px; }
+.dq-done { font-size: 13px; letter-spacing: 0; }
