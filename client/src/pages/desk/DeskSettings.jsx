@@ -162,7 +162,7 @@ export default function DeskSettings() {
             <p className="cap">{cap}</p>
             <label className="sd-set-row"><span><b>Due by</b><small>Time of day (IST) on the due working day.</small></span><input type="time" value={st.dueTime} onChange={(e) => setStage(k, 'dueTime', e.target.value)} /></label>
             <NumRow label="Working days allowed" hint="0 = the same working day (the next one if this time has already passed). 1 = the next working day." value={st.dayOffset} onChange={(v) => setStage(k, 'dayOffset', v)} unit="days" step="1" />
-            {photo && <label className="sd-check"><input type="checkbox" checked={!!st.requirePhoto} onChange={(e) => setStage(k, 'requirePhoto', e.target.checked)} /> Require at least one {k === 'packed' ? 'photo of the package' : 'photo of the manifest'} before {L('btnDone')}</label>}
+            {photo && k !== 'packed' && <label className="sd-check"><input type="checkbox" checked={!!st.requirePhoto} onChange={(e) => setStage(k, 'requirePhoto', e.target.checked)} /> Require at least one {k === 'packed' ? 'photo of the package' : 'photo of the manifest'} before {L('btnDone')}</label>}
             {k === 'packed' && <label className="sd-check"><input type="checkbox" checked={dq.allowManualAwb} onChange={(e) => setDq((x) => ({ ...x, allowManualAwb: e.target.checked }))} /> If Shipway has no AWB for an order yet, let the person type it (otherwise they wait for Shipway)</label>}
             <p className="sd-sum">{n === 0 ? `Due by ${hm(st.dueTime)} on a working day: the same day if the step starts earlier than that, otherwise the next working day.` : `Due by ${hm(st.dueTime)}, ${n} working day${n === 1 ? '' : 's'} after the step starts.`}</p>
           </div>
