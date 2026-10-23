@@ -298,7 +298,7 @@ export default function DispatchBoard() {
               <small>Paused orders. Their deadline is stopped. Resume to send one back to its column, or cancel it. Every hold and cancel needs a note.</small>
             </div>
             <div className="dq-cards dq-holdcards">
-              {held.map((o) => <HeldCard key={o.orderId} o={o} now={now} offset={offset} canAct={actor} busy={busyId === o.orderId} onResume={setResuming} onCancel={setCancelling} onOpen={setOpen} />)}
+              {held.filter((o) => o.dq && o.dq.hold).map((o) => <HeldCard key={o.orderId} o={o} now={now} offset={offset} canAct={actor} busy={busyId === o.orderId} onResume={setResuming} onCancel={setCancelling} onOpen={setOpen} />)}
             </div>
           </div>
         )}
