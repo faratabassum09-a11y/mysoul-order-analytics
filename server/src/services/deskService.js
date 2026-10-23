@@ -445,6 +445,7 @@ async function dispatchBoard(opts = {}) {
       dq: {
         step, stepAt: DP.stepStart(d), dueAt: due, overdue: !!due && due.getTime() < now.getTime(),
         slip: (d.dq && d.dq.slip) || null, packed: (d.dq && d.dq.packed) || null,
+        hold: DP.isHeld(d) ? d.dq.hold : null,
         suggestedAwb: (c.shipway && c.shipway.awb) || '', // from Shipway
         suggestedCourier: (c.shipway && c.shipway.carrier) || '',
       },
