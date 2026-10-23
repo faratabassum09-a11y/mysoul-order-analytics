@@ -161,7 +161,7 @@ function cardOf(desk, shop, conf, ship) {
     partial: desk.partial && desk.partial.amount ? desk.partial : null, cancel: desk.cancel && desk.cancel.reason ? desk.cancel : null,
     dispatch: desk.dispatch && desk.dispatch.at ? desk.dispatch : null, confirmedAt: desk.confirmedAt || null, confirmedAtFu: desk.confirmedAtFu || '',
     shipway: ship ? { status: ship.status, group: ship.group, carrier: ship.carrier, awb: ship.awb } : null,
-    dq: desk.dq && desk.dq.step ? { step: desk.dq.step, slip: desk.dq.slip || null, packed: desk.dq.packed || null, handover: desk.dq.handover || null } : null,
+    dq: desk.dq && desk.dq.step ? { step: desk.dq.step, slip: desk.dq.slip || null, packed: desk.dq.packed || null, handover: desk.dq.handover || null, hold: desk.dq.hold && desk.dq.hold.at ? desk.dq.hold : null } : null,
     refundDue: !!(desk.stage === 'cancelled' && desk.partial && desk.partial.amount),
   };
 }
@@ -437,10 +437,10 @@ async function dispatchBoard(opts = {}) {
     withShop(desks, { ship: true }),
     DeskOrder.find({ stage: 'dispatch' }).select('orderId dq confirmedAt orderAt').lean(),
   ]);
-  const columns = { slip: [], packed: [], handover: [] };
+  const columns = { slip: [], packed: [], handover: [] }; const hold = [];
   cards.forEach((c, i) => {
     const d = desks[i]; const step = DP.stepOf(d); const due = DP.dueAt(d, dconf);
-    columns[step].push({
+    (DP.isHeld(d) ? hold : columns[step]).push({
       ...c,
       dq: {
         step, stepAt: DP.stepStart(d), dueAt: due, overdue: !!due && due.getTime() < now.getTime(),
@@ -451,14 +451,33 @@ async function dispatchBoard(opts = {}) {
     });
   });
   for (const k of DP.STEPS) columns[k].sort((a, b) => new Date(a.dq.dueAt || 0) - new Date(b.dq.dueAt || 0));
+  hold.sort((a, b) => new Date(a.dq.hold.at) - new Date(b.dq.hold.at)); // longest on hold first
   const collect = cards.reduce((n, c) => n + (c.collect || 0), 0);
-  return { now, config: dconf, columns, counts: DP.stepCounts(all, dconf, now), collectTotal: D.rupees(collect), shown: cards.length, assign: assignBrief(acfg, ['slip', 'packed', 'handover']) };
+  return { now, config: dconf, cancelReasons: (await getConfig()).cancelReasons, columns, hold, counts: DP.stepCounts(all, dconf, now), collectTotal: D.rupees(collect), shown: cards.length, assign: assignBrief(acfg, ['slip', 'packed', 'handover']) };
 }
 
 async function dispatchSlip(user, orderId) {
   const { doc } = await loadForAction(orderId, user);
   const t = DP.slipDone(doc, await getDispatchConfig(), user);
   return brief(await applyTransition(doc, t));
+}
+
+// Hold, resume and cancel from the Dispatch queue (packing team and admins). Hold and cancel both need a note.
+async function dispatchHold(user, orderId, { note }) {
+  const { doc } = await loadForAction(orderId, user);
+  return brief(await applyTransition(doc, DP.holdOrder(doc, { note }, user), { assign: false }));
+}
+async function dispatchResume(user, orderId, { note } = {}) {
+  const { doc } = await loadForAction(orderId, user);
+  return brief(await applyTransition(doc, DP.resumeOrder(doc, { note }, user)));
+}
+async function dispatchCancel(user, orderId, { reason, note }) {
+  const { doc, total } = await loadForAction(orderId, user);
+  if (doc.stage !== 'dispatch') throw httpErr(409, `Order #${orderId} is no longer in the dispatch queue. Refresh to see its latest status.`);
+  const clean = DP.cleanNote(note, { label: 'note saying why the order is cancelled' });
+  const t = D.transition(doc, 'cancel', { reason, note: clean }, await getConfig(), user, { total, orderId });
+  t.set['dq.hold'] = null; // a cancelled order is not "on hold" any more
+  return brief(await applyTransition(doc, t, { assign: false }));
 }
 
 const PHOTO_ERR = 'Every file must be a photo (JPG, PNG or WebP).';
@@ -792,4 +811,4 @@ function start() {
   }
 }
 
-module.exports = { staleQueue, getAssignConfig, saveAssignConfig, assignOverview, autoAssign, assignManual, assignBulk, rebalance, team, callBoard, analysisData, analysisSheet, getConfig, saveConfig, getDispatchConfig, saveDispatchConfig, liveAwb, dispatchBoard, dispatchSlip, dispatchPacked, dispatchHandover, proofFile, transitList, refreshTransit, ingest, ingestIfStale, act, savePartial, shotFile, counts, queue, ordersList, orderDetail, overview, funnel, refresh, start, cardOf };
+module.exports = { staleQueue, getAssignConfig, saveAssignConfig, assignOverview, autoAssign, assignManual, assignBulk, rebalance, team, callBoard, analysisData, analysisSheet, getConfig, saveConfig, getDispatchConfig, saveDispatchConfig, liveAwb, dispatchBoard, dispatchHold, dispatchResume, dispatchCancel, dispatchSlip, dispatchPacked, dispatchHandover, proofFile, transitList, refreshTransit, ingest, ingestIfStale, act, savePartial, shotFile, counts, queue, ordersList, orderDetail, overview, funnel, refresh, start, cardOf };

@@ -196,6 +196,10 @@ Shopify desk, tab **Dispatch queue** (packing team and admins). A confirmed or p
 
 Then **In-transit orders** lists everything handed over, with the Shipway status, AWB, courier, days since handover and the manifest photo. **Fetch Shipway status** refreshes the orders on screen right now; the server also refreshes them on its own (same rhythm as `SHIPWAY_SYNC_INTERVAL_MIN`).
 
+**Hold and Cancel (Dispatch queue).** Every card has **⏸ Hold** and **Cancel order** (packing team and admins). Both need a **note**.
+- **Hold** keeps the order at its step but moves it to the **On hold** section under the board. Its deadline is paused: it is never overdue and not counted in the column or the late count. **▶ Resume** returns it to its column and the deadline counts from that moment (an optional note can be added). Hold, resume and the note show in the order drawer and history.
+- **Cancel order** asks for a reason from the cancel-reason list plus a note, then moves the order to Cancelled (with a refund-due flag if a partial payment was received). A held order can be resumed or cancelled.
+
 **Settings (admin, Shopify desk > Settings > Dispatch queue, or the gear on the queue).** Each column has its own: **due time**, **working days allowed** and **photo required**. Defaults: packing slip 12:00 PM, order packed 12:00 PM, order handover 6:00 PM, all "same working day". A deadline counts from the moment the order entered that column; if that moment is already after the cut-off, the next working day applies. Working days (default Mon to Sat) and a holiday list are set in the same place. Cards turn red when overdue and the tab shows how many are late. Every step records who did it, when, and whether it was late (visible in the order drawer, with both photos).
 
 **Needs:** the Shopify app must be able to read fulfillments (`read_orders` covers the order's tracking numbers). After deploying, the next Shopify sync does **one full reload** of orders to pick up tracking numbers. In-transit status needs `SHIPWAY_USERNAME` and `SHIPWAY_LICENSE_KEY` (see *Shipway* above).

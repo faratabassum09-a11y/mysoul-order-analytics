@@ -429,9 +429,10 @@ export function OrderDrawer({ orderId, onClose }) {
             )}
             {c.cancel && <div className="sd-box bad"><b>Cancelled: {c.cancel.reason}</b><span>{c.cancel.auto ? 'Automatically' : `By ${c.cancel.byName}`} · {D(c.cancel.at)}{c.cancel.fromStage ? ` · from ${STAGE_NAME[c.cancel.fromStage] || c.cancel.fromStage}` : ''}</span>{c.cancel.note && <span>“{c.cancel.note}”</span>}{c.refundDue && <span><b>Refund due:</b> {inr(c.partial.amount)} was received before the cancellation.</span>}</div>}
             {c.dispatch && <div className="sd-box good"><b>Dispatched {D(c.dispatch.at)}</b><span>By {c.dispatch.byName}{c.dispatch.courier ? ` · ${c.dispatch.courier}` : ''}{c.dispatch.awb ? ` · AWB ${c.dispatch.awb}` : ''}</span>{c.dispatch.note && <span>“{c.dispatch.note}”</span>}</div>}
-            {c.dq && (c.dq.slip || c.dq.packed || c.dq.handover) && (
+            {c.dq && (c.dq.slip || c.dq.packed || c.dq.handover || c.dq.hold) && (
               <div className="sd-box">
                 <b>Dispatch queue</b>
+                {c.dq.hold && <span><b>On hold</b> since {D(c.dq.hold.at)} · {c.dq.hold.byName}{c.dq.hold.note ? ` · “${c.dq.hold.note}”` : ''}</span>}
                 {c.dq.slip && <span>Packing slip done · {c.dq.slip.byName} · {D(c.dq.slip.at)}{c.dq.slip.late ? ' · late' : ''}</span>}
                 {c.dq.packed && <span>Packed · {c.dq.packed.byName} · {D(c.dq.packed.at)} · AWB {c.dq.packed.awb}{c.dq.packed.late ? ' · late' : ''}</span>}
                 {c.dq.packed && packedPhotos(c.dq.packed).map((id, i) => <ProofImg key={id} id={id} alt={`Photo of the package ${i + 1}`} onOpen={(src, title) => setProof({ src, title })} />)}
@@ -462,7 +463,7 @@ export function OrderDrawer({ orderId, onClose }) {
             {data.log.length === 0 ? <p className="muted">No follow-ups yet.</p> : (
               <ol className="timeline">
                 {[...data.log].reverse().map((e, i) => (
-                  <li key={i} className={['confirm', 'partial_paid', 'dispatch'].includes(e.action) ? 'good' : ['cancel', 'auto_cancel', 'shopify_cancel'].includes(e.action) ? 'bad' : ['dnp', 'to_pending'].includes(e.action) ? 'warn' : ''}>
+                  <li key={i} className={['confirm', 'partial_paid', 'dispatch'].includes(e.action) ? 'good' : ['cancel', 'auto_cancel', 'shopify_cancel'].includes(e.action) ? 'bad' : ['dnp', 'to_pending', 'hold'].includes(e.action) ? 'warn' : ''}>
                     <div className="tl-main"><b>{e.label}</b></div>
                     <div className="tl-sub">{e.by} · {fmtWhen(e.at)}</div>
                   </li>
