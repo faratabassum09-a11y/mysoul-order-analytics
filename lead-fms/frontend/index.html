@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <title>Lead FMS — MySoulSchool</title>
+    <meta name="theme-color" content="#1c2130" />
+    <!-- Apply the saved theme before first paint (default: dark) so there is no light/dark flash. -->
+    <script>
+      try {
+        document.documentElement.setAttribute("data-theme", localStorage.getItem("theme") === "light" ? "light" : "dark");
+      } catch (e) {
+        document.documentElement.setAttribute("data-theme", "dark");
+      }
+    </script>
+    <!-- Pre-React splash. Pure HTML + CSS so it paints instantly, before any JS has downloaded.
+         React replaces everything inside #root on first render. Classes are boot-* to avoid clashes. -->
+    <style>
+      .boot{position:fixed;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;padding:24px;text-align:center;overflow:hidden;color:#e7e9ef;font:14px/1.5 Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;background:linear-gradient(190deg,#1c2130,#12141d)}
+      .boot-glow{position:absolute;width:46vmax;height:46vmax;border-radius:50%;filter:blur(80px);opacity:.3;background:#6d5bf0;top:-18vmax;left:-12vmax;animation:boot-drift 18s ease-in-out infinite alternate}
+      .boot-glow.b{background:#2a5fd6;top:auto;left:auto;bottom:-22vmax;right:-14vmax;animation-duration:22s;animation-delay:-6s}
+      @keyframes boot-drift{to{transform:translate(6vmax,4vmax) scale(1.12)}}
+      .boot-stage{position:relative;width:120px;height:120px;display:grid;place-items:center;margin-bottom:6px}
+      .boot-stage>*{grid-area:1/1}
+      .boot-ring{width:120px;height:120px;transform:rotate(-90deg)}
+      .boot-ring circle{fill:none;stroke-linecap:round;transform-origin:60px 60px}
+      .boot-ring .t{stroke:rgba(255,255,255,.08);stroke-width:2}
+      .boot-ring .a{stroke:#6d5bf0;stroke-width:3.2;stroke-dasharray:96 243;animation:boot-spin 1.6s linear infinite}
+      .boot-ring .b{stroke:rgba(255,255,255,.55);stroke-width:2;stroke-dasharray:44 239;animation:boot-spin 2.6s linear infinite reverse}
+      @keyframes boot-spin{to{transform:rotate(360deg)}}
+      .boot-logo{position:relative;filter:drop-shadow(0 10px 24px rgba(0,0,0,.5));animation:boot-float 3s ease-in-out infinite}
+      @keyframes boot-float{50%{transform:translateY(-4px) scale(1.04)}}
+      .boot-brand{position:relative;font-size:11px;font-weight:600;letter-spacing:.18em;text-transform:uppercase;color:rgba(255,255,255,.45)}
+      .boot-status{position:relative;font-size:17px;font-weight:650;color:#fff}
+      .boot-bar{position:relative;width:min(260px,70vw);height:4px;border-radius:99px;background:rgba(255,255,255,.1);overflow:hidden;margin-top:4px}
+      .boot-bar span{display:block;height:100%;width:40%;border-radius:inherit;background:linear-gradient(90deg,#6d5bf0,#2a5fd6);animation:boot-slide 1.3s cubic-bezier(.4,0,.2,1) infinite}
+      @keyframes boot-slide{from{transform:translateX(-110%)}to{transform:translateX(280%)}}
+      .boot-hint{position:relative;max-width:320px;font-size:12.5px;color:rgba(255,255,255,.62)}
+      .boot-btn{position:relative;margin-top:4px;font:inherit;font-weight:600;color:#fff;cursor:pointer;padding:9px 16px;border-radius:10px;border:1px solid rgba(255,255,255,.22);background:rgba(255,255,255,.08)}
+      .boot[hidden],.boot [hidden]{display:none}
+      .boot-off .boot-bar span{background:#ff7a59}
+      @media (prefers-reduced-motion:reduce){.boot *{animation:none!important}.boot-bar span{width:45%}}
+    </style>
+  </head>
+  <body>
+    <div id="root">
+      <div class="boot" id="boot" role="status" aria-live="polite">
+        <i class="boot-glow"></i><i class="boot-glow b"></i>
+        <div class="boot-stage">
+          <svg class="boot-ring" viewBox="0 0 120 120" aria-hidden="true">
+            <circle class="t" cx="60" cy="60" r="54"/><circle class="a" cx="60" cy="60" r="54"/><circle class="b" cx="60" cy="60" r="45"/>
+          </svg>
+          <svg class="boot-logo" width="60" height="60" viewBox="0 0 48 48" aria-hidden="true">
+            <defs>
+              <linearGradient id="bl-bg" x1="0" y1="0" x2="48" y2="48" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#6d5bf0"/><stop offset="1" stop-color="#2a5fd6"/></linearGradient>
+              <linearGradient id="bl-sh" x1="0" y1="0" x2="0" y2="48" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#fff" stop-opacity=".22"/><stop offset=".55" stop-color="#fff" stop-opacity="0"/></linearGradient>
+            </defs>
+            <rect width="48" height="48" rx="14" fill="url(#bl-bg)"/><rect width="48" height="48" rx="14" fill="url(#bl-sh)"/>
+            <path d="M18.2 14.5c-.6-.9-1.8-1.1-2.7-.5l-2 1.4c-1 .7-1.4 1.9-1.1 3 1.6 6.7 6.1 12.2 12.1 15.7 1.4.8 3 1.1 4.5.7l2.6-.7c1.1-.3 1.8-1.4 1.6-2.5l-.5-2.2c-.2-.9-1-1.5-1.9-1.4l-2.7.4c-.5.1-1.1-.1-1.5-.5l-3.6-3.6c-.4-.4-.6-1-.5-1.500l.4-2.500c.1-.9-.3-1.800-1.100-2.200l-2.600-1.500Z" fill="#fff" fill-opacity=".95"/>
+            <path d="M29 12.5a9 9 0 0 1 7.5 7.5M29 17.5a4.5 4.5 0 0 1 3.5 3.5" fill="none" stroke="#fff" stroke-width="2.8" stroke-linecap="round"/>
+          </svg>
+        </div>
+        <div class="boot-brand">MySoulSchool · Lead FMS</div>
+        <div class="boot-status" id="boot-status">Loading…</div>
+        <div class="boot-bar" aria-hidden="true"><span></span></div>
+        <div class="boot-hint" id="boot-hint" hidden></div>
+        <button class="boot-btn" id="boot-retry" type="button" hidden onclick="location.reload()">Reload</button>
+      </div>
+    </div>
+    <noscript>
+      <div style="position:fixed;inset:0;display:grid;place-items:center;background:#12141d;color:#fff;font:16px Inter,sans-serif;text-align:center;padding:24px">
+        This app needs JavaScript. Please enable it in your browser and reload.
+      </div>
+    </noscript>
+    <script>
+      // Splash helpers: reflect "offline" and "taking long" before React exists.
+      (function () {
+        var $ = function (id) { return document.getElementById(id); };
+        function alive() { return !!$("boot"); }
+        function offline() {
+          if (!alive()) return;
+          $("boot").classList.add("boot-off");
+          $("boot-status").textContent = "You're offline";
+          $("boot-hint").textContent = "Waiting for your connection — this page opens automatically when you're back online.";
+          $("boot-hint").hidden = false;
+        }
+        if (navigator.onLine === false) offline();
+        window.addEventListener("offline", offline);
+        window.addEventListener("online", function () { if (alive()) location.reload(); });
+        setTimeout(function () {
+          if (!alive() || navigator.onLine === false) return;
+          $("boot-hint").textContent = "Taking longer than usual — still loading.";
+          $("boot-hint").hidden = false;
+          $("boot-retry").hidden = false;
+        }, 10000);
+      })();
+    </script>
+    <script type="module" src="/src/main.jsx"></script>
+  </body>
+</html>
