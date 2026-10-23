@@ -10,6 +10,15 @@ import { useLabels } from './shared.jsx';
 const STAGES = [['confirm', 'In confirm queue', '#2a7f8e'], ['pending', 'In pending', '#6a55b3'], ['dispatch', 'To dispatch', '#1c7c6c'], ['dispatched', 'Dispatched', '#3b4a96'], ['cancelled', 'Cancelled', '#b3261e'], ['none', 'Not in queue', '#a9b0ba']];
 const hrs = (h) => (h == null ? '—' : h < 1 ? `${Math.round(h * 60)} min` : h < 48 ? `${h.toFixed(1)} h` : `${(h / 24).toFixed(1)} d`);
 
+// [key in the funnel stats, label, colour, which way is good, the "x of y" line]
+export const FUNNEL_TILES = [
+  ['confirmedPct', 'Confirmed %', 'good', 'good', (f) => `${int(f.confirmed)} confirmed of ${int(f.orders)} new orders`],
+  ['partialPct', 'COD to partial pay %', 'violet', 'good', (f) => `${int(f.partial)} paid part up front of ${int(f.cod)} COD orders`],
+  ['dispatchedPct', 'Order dispatched %', 'good', 'good', (f) => `${int(f.dispatched)} dispatched of ${int(f.confirmed)} confirmed`],
+  ['rtoPct', 'RTO %', 'bad', 'bad', (f) => `${int(f.rto)} returned of ${int(f.dispatched)} dispatched · ${int(f.inTransit)} still on the way`],
+  ['deliveredPct', 'Delivered %', 'good', 'good', (f) => `${int(f.delivered)} delivered of ${int(f.dispatched)} dispatched · ${int(f.inTransit)} still on the way`],
+];
+
 function Kpi({ label, value, sub, chip, tone }) {
   return <div className={`sd-kpi ${tone || ''}`}><div className="l"><span>{label}</span>{chip}</div><b>{value}</b>{sub && <small>{sub}</small>}</div>;
 }
@@ -21,6 +30,7 @@ export default function DeskOverview() {
   useAutoRefresh(reload, 60);
   const s = data && data.stats; const p = data && data.prev;
   const total = s ? s.totalOrders : 0;
+  const fx = data && data.funnel; const pf = data && data.prevFunnel;
   return (
     <>
       <FilterBar range={data && data.range} />
@@ -38,11 +48,19 @@ export default function DeskOverview() {
 
               <div className="sd-kpis">
                 <Kpi label="Orders" value={int(s.totalOrders)} sub={`Value ${inr(s.money.all)}`} chip={p && <DeltaChip type="count" cur={s.totalOrders} prev={p.totalOrders} up="good" />} />
-                <Kpi label="Confirmed" value={pct(s.confirmRate)} sub={`${int(s.stageCount.dispatch + s.stageCount.dispatched)} of ${int(total)} · ${inr(s.money.confirmed)}`} tone="good" chip={p && <DeltaChip type="pct" cur={{ v: s.confirmRate }} prev={{ v: p.confirmRate }} up="good" />} />
+                <Kpi label="Confirmed ratio" value={fx.confirmedRatio == null ? '—' : fx.confirmedRatio.toFixed(2)} sub={`${int(fx.orders)} all new orders ÷ ${int(fx.confirmed)} confirmed orders`} tone="good" chip={pf && fx.confirmedRatio != null && pf.confirmedRatio != null && <DeltaChip type="count" cur={fx.confirmedRatio} prev={pf.confirmedRatio} up="bad" />} />
                 <Kpi label="Cancelled" value={pct(s.cancelRate)} sub={`${int(s.stageCount.cancelled)} orders · ${inr(s.money.cancelled)} lost`} tone="bad" chip={p && <DeltaChip type="pct" cur={{ v: s.cancelRate }} prev={{ v: p.cancelRate }} up="bad" />} />
                 <Kpi label="Still open" value={int(s.stageCount.confirm + s.stageCount.pending)} sub={`${inr(s.money.open)} waiting on a call`} tone="warn" />
                 <Kpi label="Time to first decision" value={hrs(s.avgDecisionHours)} sub="From order placed to confirmed, partial or cancelled" />
                 <Kpi label="Partial payments" value={int(s.partialCount)} sub={`${inr(s.money.collected)} received · ${inr(s.money.balance)} to collect`} tone="violet" />
+              </div>
+
+              <h2 className="sd-h2">Order funnel</h2>
+              <p className="cap">Every number counts the orders placed in this window. See the Order funnel tab for the counts per day and over time.</p>
+              <div className="sd-kpis fn-rates">
+                {FUNNEL_TILES.map(([key, label, tone, up, of]) => (
+                  <Kpi key={key} label={label} value={pct(fx[key].v)} sub={of(fx)} tone={tone} chip={pf && <DeltaChip type="pct" cur={fx[key]} prev={pf[key]} up={up} />} />
+                ))}
               </div>
 
               <h2 className="sd-h2">Where every order is now</h2>

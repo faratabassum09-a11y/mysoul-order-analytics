@@ -670,3 +670,15 @@ h2.sd-rowname .sd-rename { font-size: 16px; width: 16ch; }
 .sd-card .sd-id .link::after { content: "↗"; font-size: 11px; opacity: .7; }
 .sd-card .sd-id .link:hover { background: var(--accent, #1c5fd4); color: #fff; text-decoration: none; box-shadow: 0 2px 6px rgba(0,0,0,.18); transform: translateY(-1px); }
 .sd-card .sd-id .link:focus-visible { outline: 2px solid var(--accent, #1c5fd4); outline-offset: 2px; }
+
+/* Order funnel tab */
+.fn-counts { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); }
+.fn-bar { display: flex; flex-wrap: wrap; gap: 10px 18px; align-items: center; justify-content: space-between; }
+.fn-legend { display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: 13px; color: var(--ink-2); }
+.fn-legend label { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
+.fn-legend i { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+.fn-table { max-height: 460px; overflow: auto; }
+.fn-table thead th { position: sticky; top: 0; background: var(--surface); z-index: 1; }
+.fn-total td { background: #f4f6f2; }
+.sd-table tr.muted td { color: var(--ink-3); }
+.fn-rates { grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); }

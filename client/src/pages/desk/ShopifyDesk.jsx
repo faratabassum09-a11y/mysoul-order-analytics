@@ -8,6 +8,7 @@ import { LabelsProvider, notifyDesk, useDeskCounts, useLabels } from './shared.j
 import DeskOverview from './DeskOverview.jsx';
 import DeskOrders from './DeskOrders.jsx';
 import OrderAnalysis from './OrderAnalysis.jsx';
+import OrderFunnel from './OrderFunnel.jsx';
 import { ConfirmQueue, PendingQueue } from './DeskQueue.jsx';
 import { PartialPaid, CancelledOrders } from './DeskLists.jsx';
 import DispatchBoard from './DispatchBoard.jsx';
@@ -20,6 +21,7 @@ function tabsFor(user, c, L) {
   const ALL = ['admin', 'confirmation', 'packing'];
   const all = [
     ['overview', L('tabOverview'), null, ['admin']],
+    ['funnel', L('tabFunnel'), null, ['admin']],
     ['orders', L('tabOrders'), null, ALL],
     ['analysis', L('tabAnalysis'), null, ALL],
     ['confirm', L('tabConfirm'), c && n(c.confirm.total), ['admin', 'confirmation'], c && c.confirm.due],
@@ -76,6 +78,7 @@ function DeskInner() {
       </nav>
       <Routes>
         <Route path="overview" element={guard('overview', <DeskOverview />)} />
+        <Route path="funnel" element={guard('funnel', <OrderFunnel />)} />
         <Route path="orders" element={<DeskOrders />} />
         <Route path="analysis" element={<OrderAnalysis />} />
         <Route path="confirm" element={guard('confirm', <ConfirmQueue />)} />
