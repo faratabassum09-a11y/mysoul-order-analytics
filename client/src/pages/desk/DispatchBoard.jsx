@@ -26,7 +26,7 @@ function Due({ dueAt, now, offset }) {
   return <span className="sd-due late" title={`Was due ${fmtWhen(dueAt)}`}>Overdue {duration(-ms)}</span>;
 }
 
-function Card({ o, col, title, now, offset, canAct, busy, picked, onPick, onDone, onOpen, assign }) {
+function Card({ o, col, title, now, offset, canAct, busy, picked, onPick, onDone, onHold, onCancel, onOpen, assign }) {
   const { L } = useLabels();
   const late = o.dq.dueAt && new Date(o.dq.dueAt).getTime() < now + offset;
   const awb = col.key === 'packed' ? o.dq.suggestedAwb : col.key === 'handover' && o.dq.packed ? o.dq.packed.awb : '';
@@ -51,7 +51,99 @@ function Card({ o, col, title, now, offset, canAct, busy, picked, onPick, onDone
           {canAct && <button className="btn good dq-done" disabled={busy} onClick={() => onDone(o, col.key)}>{L('btnDone')}</button>}
         </div>
       )}
+      {canAct && (
+        <div className="dq-row dq-side">
+          <button className="btn ghost dq-hold" disabled={busy} onClick={() => onHold(o)}>⏸ Hold</button>
+          <button className="btn ghost dq-cancel" disabled={busy} onClick={() => onCancel(o)}>Cancel order</button>
+        </div>
+      )}
     </article>
+  );
+}
+
+// A card in the "On hold" section: why it is held, who held it, and the way out (Resume or Cancel).
+function HeldCard({ o, now, offset, canAct, busy, onResume, onCancel, onOpen }) {
+  const { L } = useLabels();
+  const h = o.dq.hold;
+  const ms = now + offset - new Date(h.at).getTime();
+  return (
+    <article className="sd-card dispatch dq-card held" aria-label={`${o.orderName}, on hold`}>
+      <header>
+        <div className="sd-id"><button className="link" onClick={() => onOpen(o.orderId)}>{o.orderName}</button><PayTag o={o} />{o.partial && <span className="sd-pay part">{L('payPartial')}</span>}</div>
+        <span className="sd-due wait" title={`On hold since ${fmtWhen(h.at)}`}>On hold {duration(Math.max(0, ms))}</span>
+      </header>
+      <div className="sd-who"><b>{o.name || 'No name'}</b>{o.city ? <span className="muted"> · {o.city}</span> : null}</div>
+      <div className="sd-line"><span className="sd-amt">{inr(o.total)}</span><span className="sd-items" title={o.items}>{o.items || 'Items not loaded'}</span></div>
+      <div className="dq-note"><b>Note</b> “{h.note}”<span className="muted"> · {h.byName}, {fmtWhen(h.at)} · was at {L(STEP_KEYS[h.step] || 'stepSlip')}</span></div>
+      {canAct && (
+        <div className="dq-row dq-side">
+          <button className="btn good dq-resume" disabled={busy} onClick={() => onResume(o)}>▶ Resume</button>
+          <button className="btn ghost dq-cancel" disabled={busy} onClick={() => onCancel(o)}>Cancel order</button>
+        </div>
+      )}
+    </article>
+  );
+}
+const STEP_KEYS = { slip: 'stepSlip', packed: 'stepPacked', handover: 'stepHandover' };
+
+// ---------------------------------------------------------------- hold and cancel forms
+function HoldSheet({ order: o, show, onClose, onDone }) {
+  const [note, setNote] = useState(''); const [busy, setBusy] = useState(false);
+  const submit = async () => {
+    setBusy(true);
+    try { await api.post(`/desk/dispatch/${o.orderId}/hold`, { note: note.trim() }); notifyDesk(); show(`${o.orderName} is on hold. Its deadline is paused.`); onDone(); }
+    catch (e) { show(e.message, 'err'); if (e.status === 409) onDone(); } finally { setBusy(false); }
+  };
+  return (
+    <Sheet title={`Put on hold · ${o.orderName}`} onClose={onClose}>
+      <p className="muted">{o.name || 'No name'} · {inr(o.total)}. The order stays at its step but moves to “On hold”, and its deadline stops until someone resumes it.</p>
+      <label className="sheet-label" htmlFor="hold-note">Why is it on hold? (required)</label>
+      <textarea id="hold-note" className="sd-text" rows={3} maxLength={300} autoFocus value={note} onChange={(e) => setNote(e.target.value)} placeholder="For example: customer asked to change the address; item out of stock" />
+      <button className="btn big good" disabled={busy || note.trim().length < 3} onClick={submit}>{busy ? 'Saving…' : note.trim().length < 3 ? 'Write a note to put on hold' : 'Put on hold'}</button>
+    </Sheet>
+  );
+}
+
+function ResumeSheet({ order: o, show, onClose, onDone }) {
+  const [note, setNote] = useState(''); const [busy, setBusy] = useState(false);
+  const submit = async () => {
+    setBusy(true);
+    try { await api.post(`/desk/dispatch/${o.orderId}/resume`, { note: note.trim() }); notifyDesk(); show(`${o.orderName} resumed. Its deadline starts again now.`); onDone(); }
+    catch (e) { show(e.message, 'err'); if (e.status === 409) onDone(); } finally { setBusy(false); }
+  };
+  return (
+    <Sheet title={`Resume · ${o.orderName}`} onClose={onClose}>
+      <p className="muted">Held for: “{o.dq.hold.note}”. After resuming it goes back to its column and the deadline counts from now.</p>
+      <label className="sheet-label" htmlFor="resume-note">Note (optional)</label>
+      <textarea id="resume-note" className="sd-text" rows={2} maxLength={300} value={note} onChange={(e) => setNote(e.target.value)} placeholder="Anything the next person should know" />
+      <button className="btn big good" disabled={busy} onClick={submit}>{busy ? 'Saving…' : 'Resume order'}</button>
+    </Sheet>
+  );
+}
+
+function CancelSheet({ order: o, reasons, show, onClose, onDone }) {
+  const [pick, setPick] = useState(''); const [typed, setTyped] = useState(''); const [note, setNote] = useState(''); const [busy, setBusy] = useState(false);
+  const other = pick === 'Other';
+  const reason = other ? typed.trim() : pick;
+  const ok = reason.length >= 2 && note.trim().length >= 3;
+  const submit = async () => {
+    setBusy(true);
+    try { await api.post(`/desk/dispatch/${o.orderId}/cancel`, { reason, note: note.trim() }); notifyDesk(); show(`${o.orderName} cancelled.`); onDone(); }
+    catch (e) { show(e.message, 'err'); if (e.status === 409) onDone(); } finally { setBusy(false); }
+  };
+  return (
+    <Sheet title={`Cancel order · ${o.orderName}`} onClose={onClose}>
+      <p className="muted">{o.name || 'No name'} · {inr(o.total)}. The order leaves the dispatch queue and goes to Cancelled.{o.partial ? ` ${inr(o.partial.amount)} was already received: a refund will show as due.` : ''}</p>
+      <p className="sd-q">Why is {o.orderName} being cancelled?</p>
+      <div className="reasons" role="radiogroup" aria-label="Cancellation reason">
+        {reasons.map((r) => <button key={r} role="radio" aria-checked={pick === r} className={`reason-opt ${pick === r ? 'on' : ''}`} onClick={() => setPick(r)}>{r}</button>)}
+        {!reasons.includes('Other') && <button role="radio" aria-checked={other} className={`reason-opt ${other ? 'on' : ''}`} onClick={() => setPick('Other')}>Other</button>}
+      </div>
+      {other && <input type="text" placeholder="Type the reason" value={typed} maxLength={120} onChange={(e) => setTyped(e.target.value)} autoFocus />}
+      <label className="sheet-label" htmlFor="dc-note">Note (required)</label>
+      <textarea id="dc-note" className="sd-text" rows={3} maxLength={300} value={note} onChange={(e) => setNote(e.target.value)} placeholder="What happened? The next person will read this" />
+      <button className="btn big danger" disabled={busy || !ok} onClick={submit}>{busy ? 'Saving…' : !reason ? 'Choose a reason' : note.trim().length < 3 ? 'Write a note to cancel' : 'Cancel this order'}</button>
+    </Sheet>
   );
 }
 
@@ -140,6 +232,7 @@ export default function DispatchBoard() {
   const [open, setOpen] = useState(null);
   const assign = useAssign({ reload, show });
   const [packing, setPacking] = useState(null); const [handing, setHanding] = useState(null);
+  const [holding, setHolding] = useState(null); const [resuming, setResuming] = useState(null); const [cancelling, setCancelling] = useState(null);
   const [picked, setPicked] = useState([]); const [busyId, setBusyId] = useState(null);
   const conf = data && data.config;
   const c = data && data.counts;
@@ -155,6 +248,7 @@ export default function DispatchBoard() {
     catch (e) { show(e.message, 'err'); if (e.status === 409) reload(); } finally { setBusyId(null); }
   };
   const finish = (setter) => () => { setter(null); setPicked([]); reload(); };
+  const held = data ? data.hold || [] : [];
 
   return (
     <section>
@@ -164,7 +258,7 @@ export default function DispatchBoard() {
       </div>
       <div className="filters"><input type="search" placeholder="Search order number, name or phone" value={q} onChange={(e) => setQ(e.target.value)} aria-label="Search" /><span className="grow" />
         <WhoFilter value={who} onChange={setWho} people={isAdmin ? people : []} show={!!data && (Object.values(data.assign.modes).some((m) => m !== 'off') || !!who)} />
-        {data && <span className="muted">{data.shown} {data.shown === 1 ? 'order' : 'orders'}{c && c.overdue ? ` · ${c.overdue} overdue` : ''}{data.collectTotal ? ` · ${inr(data.collectTotal)} to collect on delivery` : ''}</span>}</div>
+        {data && <span className="muted">{data.shown} {data.shown === 1 ? 'order' : 'orders'}{c && c.overdue ? ` · ${c.overdue} overdue` : ''}{held.length ? ` · ${held.length} on hold` : ''}{data.collectTotal ? ` · ${inr(data.collectTotal)} to collect on delivery` : ''}</span>}</div>
       <Loading error={error} loading={loading && !data}>
         {data && (
           <div className="dq-board">
@@ -190,14 +284,28 @@ export default function DispatchBoard() {
                   <div className="dq-cards">
                     {items.length === 0
                       ? <Empty title="Nothing here">{col.key === 'slip' ? (q ? 'No orders match this search.' : 'Confirmed orders appear here the moment someone taps Confirmed.') : 'Cards arrive here when DONE is pressed in the column before.'}</Empty>
-                      : items.map((o) => <Card key={o.orderId} o={o} col={col} title={L(col.label)} assign={data.assign.modes[col.key] !== 'off' ? { mode: data.assign.modes[col.key], isAdmin, me: user.id, people, onAssign: assign } : null} now={now} offset={offset} canAct={actor} busy={busyId === o.orderId} picked={picked.includes(o.orderId)} onPick={pick} onDone={done} onOpen={setOpen} />)}
+                      : items.map((o) => <Card key={o.orderId} o={o} col={col} title={L(col.label)} assign={data.assign.modes[col.key] !== 'off' ? { mode: data.assign.modes[col.key], isAdmin, me: user.id, people, onAssign: assign } : null} now={now} offset={offset} canAct={actor} busy={busyId === o.orderId} picked={picked.includes(o.orderId)} onPick={pick} onDone={done} onHold={setHolding} onCancel={setCancelling} onOpen={setOpen} />)}
                   </div>
                 </div>
               );
             })}
           </div>
         )}
+        {data && held.length > 0 && (
+          <div className="dq-col hold dq-holdbox">
+            <div className="dq-colhead">
+              <div className="dq-title"><h2>On hold</h2><span className="sd-count">{held.length}</span></div>
+              <small>Paused orders. Their deadline is stopped. Resume to send one back to its column, or cancel it. Every hold and cancel needs a note.</small>
+            </div>
+            <div className="dq-cards dq-holdcards">
+              {held.map((o) => <HeldCard key={o.orderId} o={o} now={now} offset={offset} canAct={actor} busy={busyId === o.orderId} onResume={setResuming} onCancel={setCancelling} onOpen={setOpen} />)}
+            </div>
+          </div>
+        )}
       </Loading>
+      {holding && <HoldSheet order={holding} show={show} onClose={() => setHolding(null)} onDone={finish(setHolding)} />}
+      {resuming && <ResumeSheet order={resuming} show={show} onClose={() => setResuming(null)} onDone={finish(setResuming)} />}
+      {cancelling && <CancelSheet order={cancelling} reasons={(data && data.cancelReasons) || []} show={show} onClose={() => setCancelling(null)} onDone={finish(setCancelling)} />}
       {packing && <PackedSheet order={packing} conf={conf} show={show} onClose={() => setPacking(null)} onDone={finish(setPacking)} />}
       {handing && <HandoverSheet orders={handing} conf={conf} show={show} onClose={() => setHanding(null)} onDone={finish(setHanding)} />}
       {open && <OrderDrawer orderId={open} onClose={() => setOpen(null)} />}

@@ -101,13 +101,17 @@ function dueFor(startAt, stageConf, conf) {
 // Orders confirmed before this feature existed have no dq record: they simply start at the packing slip step.
 const stepOf = (doc) => (doc && doc.stage === 'dispatch' ? (doc.dq && doc.dq.step) || 'slip' : null);
 const stepStart = (doc) => (doc.dq && doc.dq.stepAt) || doc.confirmedAt || doc.orderAt || null;
+// An order can be put on hold at any step. It keeps its step, but the deadline clock is paused (no due time, never overdue) until someone resumes it.
+const isHeld = (doc) => !!(doc && doc.stage === 'dispatch' && doc.dq && doc.dq.hold && doc.dq.hold.at);
 function dueAt(doc, conf) {
+  if (isHeld(doc)) return null;
   const step = stepOf(doc); const from = step && stepStart(doc);
   return step && from ? dueFor(from, conf.stages[step], conf) : null;
 }
 
 const wrongStep = (doc, want) => {
   const at = stepOf(doc);
+  if (isHeld(doc)) return httpErr(409, `Order #${doc.orderId} is on hold. Resume it first.`);
   return httpErr(409, at
     ? `Order #${doc.orderId} is at “${STEP_LABEL[at]}”, not “${STEP_LABEL[want]}”. Refresh to see its latest step.`
     : `Order #${doc.orderId} is no longer in the dispatch queue. Refresh to see its latest status.`);
@@ -119,7 +123,7 @@ const base = (doc, who, now) => ({ at: now, by: who.name, byId: who.id, stage: '
 const timing = (doc, conf, now) => { const due = dueAt(doc, conf); return { dueAt: due, late: !!due && now.getTime() > due.getTime() }; };
 
 function slipDone(doc, conf, who = { id: 'system', name: 'System' }, now = new Date()) {
-  if (stepOf(doc) !== 'slip') throw wrongStep(doc, 'slip');
+  if (stepOf(doc) !== 'slip' || isHeld(doc)) throw wrongStep(doc, 'slip');
   const t = timing(doc, conf, now);
   const dq = { ...(doc.dq || {}), step: 'packed', stepAt: now, slip: { at: now, byName: who.name, byId: who.id, ...t } };
   return { set: { dq }, entries: [{ ...base(doc, who, now), action: 'slip_done', label: `Packing slip done${t.late ? ' (late)' : ''}` }] };
@@ -137,7 +141,7 @@ const idsOf = (many, one) => [...new Set((Array.isArray(many) && many.length ? m
 
 // input: { awb, courier, photoIds } (photoId still works for one photo)
 function packedDone(doc, input = {}, conf, who = { id: 'system', name: 'System' }, now = new Date()) {
-  if (stepOf(doc) !== 'packed') throw wrongStep(doc, 'packed');
+  if (stepOf(doc) !== 'packed' || isHeld(doc)) throw wrongStep(doc, 'packed');
   const awb = cleanAwb(input.awb);
   const photoIds = idsOf(input.photoIds, input.photoId);
   if (photoIds.length > MAX_PHOTOS) throw httpErr(400, `Add at most ${MAX_PHOTOS} photos`);
@@ -150,7 +154,7 @@ function packedDone(doc, input = {}, conf, who = { id: 'system', name: 'System' 
 
 // input: { manifestIds, courier } (manifestId still works for one photo). The order leaves the queue and becomes an In-transit order.
 function handoverDone(doc, input = {}, conf, who = { id: 'system', name: 'System' }, now = new Date()) {
-  if (stepOf(doc) !== 'handover') throw wrongStep(doc, 'handover');
+  if (stepOf(doc) !== 'handover' || isHeld(doc)) throw wrongStep(doc, 'handover');
   const manifestIds = idsOf(input.manifestIds, input.manifestId);
   if (manifestIds.length > MAX_PHOTOS) throw httpErr(400, `Add at most ${MAX_PHOTOS} photos`);
   if (conf.stages.handover.requirePhoto && !manifestIds.length) throw httpErr(400, 'Add at least one photo of the manifest first');
@@ -165,12 +169,41 @@ function handoverDone(doc, input = {}, conf, who = { id: 'system', name: 'System
   };
 }
 
+// ------------------------------------------------------------------------------------------------ hold and cancel
+// Both need a note, so the next person can see why. Hold: { note }. Resume: { note } optional. Cancel goes through lib/desk.js transition('cancel'); cancelWithNote adds the "note is required" rule.
+const MAX_NOTE = 300;
+function cleanNote(raw, { required = true, label = 'note' } = {}) {
+  const n = String(raw || '').trim().replace(/\s+/g, ' ');
+  if (required && n.length < 3) throw httpErr(400, `Write a short ${label} first (at least 3 characters)`);
+  if (n.length > MAX_NOTE) throw httpErr(400, `Keep the ${label} under ${MAX_NOTE} characters`);
+  return n;
+}
+
+function holdOrder(doc, input = {}, who = { id: 'system', name: 'System' }, now = new Date()) {
+  if (!stepOf(doc)) throw wrongStep(doc, 'slip');
+  if (isHeld(doc)) throw httpErr(409, `Order #${doc.orderId} is already on hold.`);
+  const note = cleanNote(input.note, { label: 'note saying why the order is on hold' });
+  const step = stepOf(doc);
+  const dq = { ...(doc.dq || {}), step, hold: { at: now, byName: who.name, byId: who.id, note, step } };
+  return { set: { dq }, entries: [{ ...base(doc, who, now), action: 'hold', label: `Put on hold at “${STEP_LABEL[step]}” · ${note}` }] };
+}
+
+// The deadline restarts from the moment of resuming, so the time spent on hold never counts against the packing team.
+function resumeOrder(doc, input = {}, who = { id: 'system', name: 'System' }, now = new Date()) {
+  if (!isHeld(doc)) throw httpErr(409, `Order #${doc.orderId} is not on hold. Refresh to see its latest status.`);
+  const note = cleanNote(input.note, { required: false, label: 'note' });
+  const step = stepOf(doc);
+  const dq = { ...(doc.dq || {}), step, stepAt: now, hold: null };
+  return { set: { dq }, entries: [{ ...base(doc, who, now), action: 'resume', label: `Resumed at “${STEP_LABEL[step]}”${note ? ` · ${note}` : ''}` }] };
+}
+
 // ------------------------------------------------------------------------------------------------ numbers for the tab bar and the board
 // docs: DeskOrder rows in stage 'dispatch'. Returns { slip, packed, handover, overdue, overdueBy: {slip, packed, handover} }
 function stepCounts(docs, conf, now = new Date()) {
-  const out = { slip: 0, packed: 0, handover: 0, overdue: 0, overdueBy: { slip: 0, packed: 0, handover: 0 } };
+  const out = { slip: 0, packed: 0, handover: 0, hold: 0, overdue: 0, overdueBy: { slip: 0, packed: 0, handover: 0 } };
   for (const d of docs) {
     const step = stepOf(d); if (!step) continue;
+    if (isHeld(d)) { out.hold++; continue; } // on hold: not in a column, never overdue
     out[step]++;
     const due = dueAt(d, conf);
     if (due && due.getTime() < now.getTime()) { out.overdue++; out.overdueBy[step]++; }
@@ -184,5 +217,5 @@ const timeLabel = (hhmm) => { const [h, m] = hhmm.split(':').map(Number); return
 module.exports = {
   STEPS, STEP_LABEL, MAX_HANDOVER_BATCH, MAX_PHOTOS, DEFAULT_DISPATCH_CONFIG, httpErr, idsOf,
   normaliseDispatchConfig, isWorkingDay, nextWorkingDay, dueFor, stepOf, stepStart, dueAt,
-  slipDone, packedDone, handoverDone, cleanAwb, stepCounts, timeLabel,
+  slipDone, packedDone, handoverDone, holdOrder, resumeOrder, cleanNote, isHeld, cleanAwb, stepCounts, timeLabel,
 };

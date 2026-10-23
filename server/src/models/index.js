@@ -149,7 +149,7 @@ const flowEventSchema = new Schema({
   at: { type: Date, default: Date.now, index: true },
   byId: String, byName: String, role: String,
   stage: String, // confirm | dispatch | contact
-  action: String, // confirm | partial_pay | cancel | no_answer | auto_cancel | escalate | call | whatsapp | partial_link | slip_printed | packed | ready | dispatched | delay_reason | proof_added
+  action: String, // confirm | partial_pay | cancel | no_answer | auto_cancel | escalate | call | whatsapp | partial_link | slip_printed | packed | ready | dispatched | delay_reason | proof_added | hold | resume
   previous: String, next: String, // status before and after (the "previous status" every log must carry)
   label: String, // plain-language line for the timeline
   reasonKey: String,
@@ -194,6 +194,7 @@ const deskOrderSchema = new Schema({
     slip: { at: Date, byName: String, byId: String, dueAt: Date, late: Boolean },
     packed: { at: Date, byName: String, byId: String, awb: String, courier: String, photoId: String, photoIds: [String], dueAt: Date, late: Boolean }, // photoIds: every photo of the package (photoId = the first)
     handover: { at: Date, byName: String, byId: String, manifestId: String, manifestIds: [String], dueAt: Date, late: Boolean }, // manifestIds: every photo of the manifest
+    hold: { at: Date, byName: String, byId: String, note: String, step: String }, // set while the order is on hold (deadline paused); cleared on resume or cancel
   },
   // Who has to work this order right now (see lib/assign.js). slot is the column it was given for: when the order moves to the next column it is shared out again.
   assignee: { id: String, name: String, slot: String, at: Date, by: String, auto: Boolean },

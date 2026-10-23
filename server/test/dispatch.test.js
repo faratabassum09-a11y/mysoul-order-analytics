@@ -150,3 +150,47 @@ test('typing the AWB by hand is allowed by default and can be switched off', () 
   assert.equal(P.normaliseDispatchConfig({ allowManualAwb: false }, conf).allowManualAwb, false);
   assert.equal(P.normaliseDispatchConfig({ holidays: [] }, P.normaliseDispatchConfig({ allowManualAwb: false }, conf)).allowManualAwb, false); // later saves keep it
 });
+
+// ------------------------------------------------------------ hold and resume
+test('hold needs a note, keeps the step and pauses the deadline', () => {
+  const d = doc();
+  assert.throws(() => P.holdOrder(d, { note: '  ' }, who), /note/i);
+  const held = apply(d, P.holdOrder(d, { note: 'Customer changing the address' }, who, ist('2026-10-19T10:00:00')));
+  assert.equal(P.isHeld(held), true);
+  assert.equal(P.stepOf(held), 'slip');
+  assert.equal(P.dueAt(held, conf), null);
+  assert.equal(held.log[0].action, 'hold');
+  assert.throws(() => P.holdOrder(held, { note: 'again' }, who), /already on hold/);
+});
+
+test('a held order cannot be moved along until it is resumed', () => {
+  const held = apply(doc(), P.holdOrder(doc(), { note: 'Out of stock' }, who));
+  assert.throws(() => P.slipDone(held, conf, who), (e) => e.status === 409 && /on hold/.test(e.message));
+  assert.throws(() => P.packedDone({ ...held, dq: { ...held.dq, step: 'packed' } }, { awb: 'AWB12345' }, conf, who), /on hold/);
+  assert.throws(() => P.handoverDone({ ...held, dq: { ...held.dq, step: 'handover' } }, {}, conf, who), /on hold/);
+});
+
+test('resume restarts the deadline from now and keeps the step', () => {
+  const held = apply(doc(), P.holdOrder(doc(), { note: 'Out of stock' }, who, ist('2026-10-19T10:00:00')));
+  const back = apply(held, P.resumeOrder(held, { note: 'Stock arrived' }, who, ist('2026-10-21T09:00:00')));
+  assert.equal(P.isHeld(back), false);
+  assert.equal(P.stepOf(back), 'slip');
+  assert.equal(P.dueAt(back, conf).getTime(), ist('2026-10-21T12:00:00').getTime());
+  assert.throws(() => P.resumeOrder(back, {}, who), /not on hold/);
+  assert.match(back.log[back.log.length - 1].label, /Stock arrived/);
+});
+
+test('held orders are counted separately and are never overdue', () => {
+  const late = doc({ orderId: 1 });
+  const held = apply(doc({ orderId: 2 }), P.holdOrder(doc({ orderId: 2 }), { note: 'Waiting' }, who));
+  const c = P.stepCounts([late, held], conf, ist('2026-10-25T10:00:00'));
+  assert.equal(c.slip, 1); assert.equal(c.hold, 1); assert.equal(c.overdue, 1);
+});
+
+test('cancelling from the dispatch queue records reason and note', () => {
+  const D = require('../src/lib/desk');
+  const d = doc();
+  const t = D.transition(d, 'cancel', { reason: 'Address not serviceable', note: 'Courier does not go there' }, D.DEFAULT_CONFIG, who);
+  assert.equal(t.set.stage, 'cancelled'); assert.equal(t.set.cancel.fromStage, 'dispatch'); assert.equal(t.set.cancel.note, 'Courier does not go there');
+  assert.throws(() => P.cleanNote('', { label: 'note' }), /note/);
+});

@@ -1,7 +1,7 @@
 // Orders that entered the confirm / pending queue from before the "Queue starts from" date and that nobody has worked on.
 // Changing the start date never removes orders already in the queue, so this is how an admin clears them. Orders a person has
 // acted on (a call, a DNP, a cancel ...) are NEVER touched, and neither is anything past the confirm / pending stages.
-const HUMAN_ACTIONS = ['dnp', 'confirm', 'partial_paid', 'cancel', 'restore', 'dispatch', 'slip_done', 'packed'];
+const HUMAN_ACTIONS = ['dnp', 'confirm', 'partial_paid', 'cancel', 'restore', 'dispatch', 'slip_done', 'packed', 'hold', 'resume'];
 const staleFilter = (start) => ({
   stage: { $in: ['confirm', 'pending'] },
   orderAt: { $lt: start },

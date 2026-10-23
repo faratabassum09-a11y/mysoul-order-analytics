@@ -682,3 +682,13 @@ h2.sd-rowname .sd-rename { font-size: 16px; width: 16ch; }
 .fn-total td { background: #f4f6f2; }
 .sd-table tr.muted td { color: var(--ink-3); }
 .fn-rates { grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); }
+
+/* Dispatch queue: hold and cancel */
+.dq-side { justify-content: space-between; border-top: 1px dashed var(--line); padding-top: 6px; margin-top: 4px; }
+.dq-side .btn { min-height: 34px; font-size: 13px; padding: 4px 10px; }
+.dq-hold { color: #8a5a0c; } .dq-cancel { color: var(--cancel); }
+.dq-holdbox { margin-top: 14px; border-top-color: #b7791f; }
+.dq-holdcards { grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); }
+.dq-card.held { border-left-color: #b7791f !important; background: #fffaf0; }
+.dq-note { font-size: 13px; line-height: 1.4; background: var(--line-2); border-radius: 8px; padding: 6px 9px; overflow-wrap: anywhere; }
+.dq-note .muted { display: block; font-size: 12px; }

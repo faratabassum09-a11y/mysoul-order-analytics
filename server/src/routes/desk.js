@@ -111,6 +111,9 @@ router.put('/dispatch/config', adminOnly, wrap(async (req, res) => res.json(awai
 router.get('/dispatch/board', need('packing'), wrap(async (req, res) => res.json(await svc.dispatchBoard({ ...req.query, viewer: req.staff }))));
 router.get('/dispatch/:orderId/awb', need('packing'), wrap(async (req, res) => res.json(await svc.liveAwb(orderIdOf(req)))));
 router.post('/dispatch/:orderId/slip', need('packing'), wrap(async (req, res) => res.json(await svc.dispatchSlip(who(req), orderIdOf(req)))));
+router.post('/dispatch/:orderId/hold', need('packing'), wrap(async (req, res) => res.json(await svc.dispatchHold(who(req), orderIdOf(req), { note: req.body && req.body.note }))));
+router.post('/dispatch/:orderId/resume', need('packing'), wrap(async (req, res) => res.json(await svc.dispatchResume(who(req), orderIdOf(req), { note: req.body && req.body.note }))));
+router.post('/dispatch/:orderId/cancel', need('packing'), wrap(async (req, res) => res.json(await svc.dispatchCancel(who(req), orderIdOf(req), { reason: req.body && req.body.reason, note: req.body && req.body.note }))));
 router.post('/dispatch/:orderId/packed', need('packing'), takeFiles('photos', 'photo'), wrap(async (req, res) => {
   const b = req.body || {};
   res.json(await svc.dispatchPacked(who(req), orderIdOf(req), { awb: b.awb, courier: b.courier, files: req.photos }));
