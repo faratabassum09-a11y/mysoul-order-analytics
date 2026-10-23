@@ -7,7 +7,7 @@ const GROUPS = [
     ['deskSubtitle', 'Every order comes straight from Shopify. New orders enter the confirm queue at FU1.', 'Line under the heading'],
   ] },
   { title: 'Tabs', items: [
-    ['tabOverview', 'Overview', ''], ['tabOrders', 'Shopify orders', ''], ['tabAnalysis', 'Order analysis', ''],
+    ['tabOverview', 'Overview', ''], ['tabOrders', 'Shopify orders', ''], ['tabAnalysis', 'Order analysis', ''], ['tabFunnel', 'Order funnel', ''],
     ['tabConfirm', 'Confirm queue', ''], ['tabPending', 'Pending orders', ''], ['tabDispatch', 'Dispatch queue', ''],
     ['tabTransit', 'In-transit orders', ''], ['tabPartial', 'Partial paid', ''], ['tabCancelled', 'Cancelled orders', ''], ['tabSettings', 'Settings', ''],
   ] },

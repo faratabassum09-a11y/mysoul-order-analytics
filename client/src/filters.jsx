@@ -3,7 +3,7 @@ import React, { createContext, useContext, useEffect, useMemo, useState } from '
 export const WINDOWS = [
   ['today', 'Today'], ['yesterday', 'Yesterday'], ['this_week', 'This week'], ['last_week', 'Last week'],
   ['this_month', 'This month'], ['last_month', 'Last month'], ['last_3_months', 'Last 3 months'],
-  ['last_6_months', 'Last 6 months'], ['last_12_months', 'Last 12 months'], ['all_time', 'All time'], ['custom', 'Custom range'],
+  ['last_quarter', 'Last quarter'], ['last_6_months', 'Last 6 months'], ['last_12_months', 'Last 12 months'], ['this_year', 'This year'], ['all_time', 'All time'], ['custom', 'Custom range'],
 ];
 
 const Ctx = createContext(null);

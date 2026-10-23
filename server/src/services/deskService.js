@@ -3,6 +3,7 @@
 const crypto = require('crypto');
 const { DeskOrder, DeskShot, DispatchProof, ShopifyOrder, ShipwayShipment, Setting, StaffUser } = require('../models');
 const D = require('../lib/desk');
+const FN = require('../lib/funnel');
 const DP = require('../lib/dispatch');
 const AS = require('../lib/assign');
 const F = require('../lib/flow');
@@ -709,14 +710,24 @@ async function analysisData(q = {}) {
 }
 
 // ---------------------------------------------------------------- Overview
-async function statsFor(w, now) {
+// Orders placed in a window, each with its desk record and Shipway shipment. Shared by the Overview and the Order funnel tab.
+async function loadWindow(w) {
   const base = { test: { $ne: true } };
   if (w.start) base.createdAt = { $gte: w.start, $lt: w.end };
-  const shops = await ShopifyOrder.find(base).select('orderId total createdAt').limit(50000).lean();
-  const desks = await DeskOrder.find({ orderId: { $in: shops.map((s) => s.orderId) } }).lean();
+  const shops = await ShopifyOrder.find(base).select('orderId total createdAt financialStatus paymentGateways').limit(50000).lean();
+  const ids = shops.map((s) => s.orderId);
+  const [desks, ships] = await Promise.all([
+    DeskOrder.find({ orderId: { $in: ids } }).lean(),
+    ShipwayShipment.find({ orderId: { $in: ids }, found: true }).select('orderId group found').lean(),
+  ]);
   const dBy = new Map(desks.map((d) => [d.orderId, d]));
-  const rows = shops.map((s) => ({ desk: dBy.get(s.orderId) || null, total: s.total, createdAt: s.createdAt }));
-  return { stats: D.overviewStats(rows, now), rows };
+  const hBy = new Map(ships.map((h) => [h.orderId, h]));
+  return shops.map((s) => ({ desk: dBy.get(s.orderId) || null, shop: s, ship: hBy.get(s.orderId) || null, total: s.total, createdAt: s.createdAt }));
+}
+
+async function statsFor(w, now) {
+  const rows = await loadWindow(w);
+  return { stats: D.overviewStats(rows, now), funnel: FN.funnelStats(rows), rows };
 }
 
 async function overview(q = {}) {
@@ -724,7 +735,8 @@ async function overview(q = {}) {
   const now = new Date();
   const w = resolveWindow(q.window || 'this_month', now, { from: q.from, to: q.to });
   const cur = await statsFor(w, now);
-  const prev = w.prev ? (await statsFor({ start: w.prev.start, end: w.prev.end }, now)).stats : null;
+  const prevAll = w.prev ? await statsFor({ start: w.prev.start, end: w.prev.end }, now) : null;
+  const prev = prevAll && prevAll.stats;
   const days = new Map();
   for (const r of cur.rows) {
     if (!r.createdAt) continue;
@@ -737,7 +749,22 @@ async function overview(q = {}) {
   const slim = (s) => (s ? { totalOrders: s.totalOrders, confirmRate: s.confirmRate, cancelRate: s.cancelRate, value: s.money.all, pendingRate: s.pendingRate } : null);
   return {
     range: { key: w.key, label: w.label, partial: w.partial, start: w.start ? fmtDate(w.start) : null, end: w.end ? fmtDate(new Date(w.end - 1)) : null },
-    stats: cur.stats, prev: slim(prev), daily: [...days.values()].sort((a, b) => (a.date < b.date ? -1 : 1)).map((d) => ({ ...d, value: D.rupees(d.value) })),
+    stats: cur.stats, prev: slim(prev), funnel: cur.funnel, prevFunnel: prevAll && prevAll.funnel, daily: [...days.values()].sort((a, b) => (a.date < b.date ? -1 : 1)).map((d) => ({ ...d, value: D.rupees(d.value) })),
+  };
+}
+
+// ---------------------------------------------------------------- Order funnel tab: totals, a count per day, and the same counts added up over time
+async function funnel(q = {}) {
+  await ingestIfStale();
+  const now = new Date();
+  const w = resolveWindow(q.window || 'this_month', now, { from: q.from, to: q.to });
+  const rows = await loadWindow(w);
+  const prevRows = w.prev ? await loadWindow({ start: w.prev.start, end: w.prev.end }) : null;
+  const end = w.end && w.end > now ? new Date(Math.min(w.end.getTime(), require('../lib/istTime').startOfDay(now).getTime() + 864e5)) : w.end; // a running period stops at today
+  return {
+    range: { key: w.key, label: w.label, partial: w.partial, start: w.start ? fmtDate(w.start) : null, end: w.start ? fmtDate(new Date((w.end || now).getTime() - 1)) : null },
+    stats: FN.funnelStats(rows), prev: prevRows ? FN.funnelStats(prevRows) : null,
+    ...FN.funnelDaily(rows, w.start, end),
   };
 }
 
@@ -765,4 +792,4 @@ function start() {
   }
 }
 
-module.exports = { staleQueue, getAssignConfig, saveAssignConfig, assignOverview, autoAssign, assignManual, assignBulk, rebalance, team, callBoard, analysisData, analysisSheet, getConfig, saveConfig, getDispatchConfig, saveDispatchConfig, liveAwb, dispatchBoard, dispatchSlip, dispatchPacked, dispatchHandover, proofFile, transitList, refreshTransit, ingest, ingestIfStale, act, savePartial, shotFile, counts, queue, ordersList, orderDetail, overview, refresh, start, cardOf };
+module.exports = { staleQueue, getAssignConfig, saveAssignConfig, assignOverview, autoAssign, assignManual, assignBulk, rebalance, team, callBoard, analysisData, analysisSheet, getConfig, saveConfig, getDispatchConfig, saveDispatchConfig, liveAwb, dispatchBoard, dispatchSlip, dispatchPacked, dispatchHandover, proofFile, transitList, refreshTransit, ingest, ingestIfStale, act, savePartial, shotFile, counts, queue, ordersList, orderDetail, overview, funnel, refresh, start, cardOf };

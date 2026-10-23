@@ -4,7 +4,7 @@ const { DAY } = T;
 const LABELS = {
   today: 'Today', yesterday: 'Yesterday', this_week: 'This week', last_week: 'Last week',
   this_month: 'This month', last_month: 'Last month', last_3_months: 'Last 3 months',
-  last_6_months: 'Last 6 months', last_12_months: 'Last 12 months', all_time: 'All time', custom: 'Custom range',
+  last_quarter: 'Last quarter', last_6_months: 'Last 6 months', last_12_months: 'Last 12 months', this_year: 'This year', all_time: 'All time', custom: 'Custom range',
 };
 
 // Returns { key, label, start, end (exclusive), prev: {start,end}|null, partial }.
@@ -23,6 +23,16 @@ function resolveWindow(key, now = new Date(), custom = {}) {
       prev = { start: T.addMonths(start, -1), end: start }; break;
     case 'last_month': end = T.startOfMonth(now); start = T.addMonths(end, -1);
       prev = { start: T.addMonths(start, -1), end: start }; break;
+    case 'last_quarter': { // the previous calendar quarter (Jan-Mar, Apr-Jun, Jul-Sep, Oct-Dec)
+      const p = T.istParts(now); const q = Math.floor(p.m / 3) * 3;
+      end = T.istToDate(p.y, q, 1); start = T.istToDate(p.y, q - 3, 1);
+      prev = { start: T.istToDate(p.y, q - 6, 1), end: start }; break;
+    }
+    case 'this_year': { // 1 Jan of this year up to now; compared with the whole of last year
+      const p = T.istParts(now);
+      start = T.istToDate(p.y, 0, 1); end = T.istToDate(p.y + 1, 0, 1);
+      prev = { start: T.istToDate(p.y - 1, 0, 1), end: start }; break;
+    }
     case 'last_3_months': case 'last_6_months': case 'last_12_months': {
       const n = Number(key.split('_')[1]);
       end = new Date(sod.getTime() + DAY);

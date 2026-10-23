@@ -4,6 +4,7 @@
  "tabOverview": "Overview",
  "tabOrders": "Shopify orders",
  "tabAnalysis": "Order analysis",
+ "tabFunnel": "Order funnel",
  "tabConfirm": "Confirm queue",
  "tabPending": "Pending orders",
  "tabDispatch": "Dispatch queue",
