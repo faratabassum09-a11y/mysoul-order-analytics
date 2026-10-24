@@ -4,8 +4,6 @@ import { api, useApi } from './api.js';
 import { useStaff } from './staff.jsx';
 import { isAdmin, rolesOf } from './flowUi.js';
 import ShopifyDesk, { deskHome } from './pages/desk/ShopifyDesk.jsx';
-import ConfirmQueue from './pages/ConfirmQueue.jsx';
-import DispatchDesk from './pages/DispatchDesk.jsx';
 import TeamLogin, { ChangePassword, homeFor } from './pages/TeamLogin.jsx';
 import Overview from './pages/Overview.jsx';
 import TeamDashboard from './pages/TeamDashboard.jsx';
@@ -16,21 +14,19 @@ import Trends from './pages/Trends.jsx';
 import PaymentMode from './pages/PaymentMode.jsx';
 import Campaigns from './pages/Campaigns.jsx';
 import Reasons from './pages/Reasons.jsx';
-import Orders from './pages/Orders.jsx';
 import Issues from './pages/Issues.jsx';
 import Settings from './pages/Settings.jsx';
 
 // Third item 'sub' = an indented entry that lives under the item above it.
 const NAV = [
   ['/', 'Overview'], ['/shopify-desk', 'Shopify desk'], ['/ndr', 'Non-Delivery Report (NDR)', 'sub'], ['/rto', 'RTO & Returns', 'sub'], ['/weight-discrepancy', 'Weight Discrepancy', 'sub'], ['/team-performance', 'Team performance'], ['/trends', 'Trends'], ['/payment-mode', 'Payment mode'], ['/campaigns', 'Campaigns'], ['/reasons', 'Reasons'],
-  ['/orders', 'Orders'], ['/confirm-queue', 'Confirm queue', 'sub'], ['/dispatch-desk', 'Dispatch desk', 'sub'],
   ['/issues', 'Data issues'], ['/settings', 'Settings'],
 ];
 
 // Which pages each login may open. Admin sees all of NAV; the others get exactly these (the server enforces the same rules).
 const ROLE_PAGES = {
-  confirmation: ['/', '/shopify-desk', '/ndr', '/confirm-queue'],
-  packing: ['/', '/shopify-desk', '/rto', '/weight-discrepancy', '/dispatch-desk'],
+  confirmation: ['/', '/shopify-desk', '/ndr'],
+  packing: ['/', '/shopify-desk', '/rto', '/weight-discrepancy'],
 };
 // A person on both teams gets the pages of both.
 const pagesFor = (user) => (isAdmin(user) ? null : [...new Set(['/', ...rolesOf(user).flatMap((r) => ROLE_PAGES[r] || [])])]);
@@ -44,8 +40,8 @@ function useBadges() {
       if (document.hidden) return;
       try {
         // each count is fetched on its own: a role that may not read one of them still gets the others
-        const [q, d, s, c] = await Promise.all([api.get('/flow/confirm-queue').catch(() => null), api.get('/flow/dispatch', { section: 'print_slip' }).catch(() => null), api.get('/desk/counts').catch(() => null), api.get('/desk/cases/counts').catch(() => null)]);
-        if (live) setB({ queue: q ? q.counts : { total: 0, red: 0 }, desk: d ? d.counts : { delayed: 0, print_slip: 0, ready_for_pickup: 0 }, shop: s, cases: c });
+        const [s, c] = await Promise.all([api.get('/desk/counts').catch(() => null), api.get('/desk/cases/counts').catch(() => null)]);
+        if (live) setB({ shop: s, cases: c });
       } catch (e) { /* not signed in or offline: no badges */ }
     };
     load();
@@ -67,11 +63,6 @@ function Badge({ to, badges }) {
     if (to === '/ndr' && c.ndr && c.ndr.open > 0) return <span className={`nav-badge ${c.ndr.due > 0 ? 'bad' : ''}`} title={`${c.ndr.due} due now`}>{c.ndr.due > 0 ? c.ndr.due : c.ndr.open}</span>;
     if (to === '/rto' && c.rto && c.rto.pending > 0) return <span className="nav-badge" title="RTO not yet received">{c.rto.pending}</span>;
     if (to === '/weight-discrepancy' && c.weight && c.weight.open > 0) return <span className="nav-badge" title="Open cases">{c.weight.open}</span>;
-  }
-  if (to === '/confirm-queue' && badges.queue.total > 0) return <span className={`nav-badge ${badges.queue.red > 0 ? 'bad' : ''}`} title={`${badges.queue.red} overdue`}>{badges.queue.total}</span>;
-  if (to === '/dispatch-desk') {
-    if (badges.desk.delayed > 0) return <span className="nav-badge bad" title="Delayed orders">{badges.desk.delayed}</span>;
-    if (badges.desk.print_slip + badges.desk.ready_for_pickup > 0) return <span className="nav-badge">{badges.desk.print_slip + badges.desk.ready_for_pickup}</span>;
   }
   return null;
 }
@@ -143,9 +134,6 @@ function Dashboard({ user }) {
           <Route path="/ndr" element={guard('/ndr', <NdrPage />)} />
           <Route path="/rto" element={guard('/rto', <RtoPage />)} />
           <Route path="/weight-discrepancy" element={guard('/weight-discrepancy', <WeightPage />)} />
-          <Route path="/orders" element={guard('/orders', <Orders />)} />
-          <Route path="/confirm-queue" element={guard('/confirm-queue', <ConfirmQueue />)} />
-          <Route path="/dispatch-desk" element={guard('/dispatch-desk', <DispatchDesk />)} />
           <Route path="/issues" element={guard('/issues', <Issues />)} />
           <Route path="/settings" element={guard('/settings', <Settings />)} />
           <Route path="*" element={<Navigate to="/" replace />} />

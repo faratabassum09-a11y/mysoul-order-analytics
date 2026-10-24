@@ -27,7 +27,7 @@ export default function TeamPerformance() {
   return (
     <div className="section">
       <h2 className="sect" style={{ marginTop: 0 }}>Sheet queue service levels</h2>
-      <p className="cap">Counted by order date, from what the team did in the <Link to="/confirm-queue">Confirm queue</Link> and <Link to="/dispatch-desk">Dispatch desk</Link>. Orders handled only in the sheet are not included. For the full picture of every team member, see <Link to="/team-performance">Team performance</Link>.</p>
+      <p className="cap">Counted by order date, from what the team did in the old sheet-based Confirm queue and Dispatch desk (now retired). Orders worked in the Shopify desk are not included here. For the full picture of every team member, see <Link to="/team-performance">Team performance</Link>.</p>
       {data.tracked === 0 ? (
         <div className="card muted">No team activity in this window yet. This fills in by itself as the team confirms and packs orders.</div>
       ) : (

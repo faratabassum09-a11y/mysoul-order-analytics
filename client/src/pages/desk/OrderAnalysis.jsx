@@ -11,6 +11,8 @@ const when = (s) => (s ? new Date(s).toLocaleString('en-IN', { day: 'numeric', m
 const CHIPS = [['', 'All'], ['confirm', 'Confirm queue'], ['pending', 'Pending'], ['dispatch', 'To dispatch'], ['dispatched', 'Dispatched'], ['cancelled', 'Cancelled'], ['none', 'Not in queue']];
 const Mark = ({ v }) => (v ? <span className={`oa-mark ${v === 'Late' ? 'late' : 'ok'}`}>{v}</span> : null);
 const Dash = () => <span className="muted">—</span>;
+// "38% of orders" for a count tile; the base is every order in the window.
+const share = (n, d) => (d > 0 ? `${Math.round((n / d) * 1000) / 10}%` : '0%');
 
 // One step of the journey: who did it and when, or a dash while it has not happened.
 function Step({ at, by, extra, mark }) {
@@ -67,11 +69,11 @@ export default function OrderAnalysis() {
       <FilterBar range={data && data.range} />
       <div className="sd-body">
         <div className="sd-stats">
-          <div className="sd-stat"><span>Orders</span><b>{s ? int(s.n) : '–'}</b><small>{s ? inr(s.value) : ''}</small></div>
-          <div className="sd-stat good"><span>Confirmed</span><b>{s ? int(s.confirmed) : '–'}</b><small>{s && s.avgConfirm != null ? `avg ${s.avgConfirm} h to confirm` : ''}</small></div>
-          <div className="sd-stat bad"><span>Cancelled</span><b>{s ? int(s.cancelled) : '–'}</b></div>
-          <div className="sd-stat violet"><span>Handed to courier</span><b>{s ? int(s.handed) : '–'}</b><small>{s && s.avgOrderHand != null ? `avg ${s.avgOrderHand} h order to handover` : ''}</small></div>
-          <div className="sd-stat warn"><span>Overdue now</span><b>{s ? int(s.overdue) : '–'}</b><small>{s ? `${int(s.late)} with a late step` : ''}</small></div>
+          <div className="sd-stat"><span>Orders</span><b>{s ? int(s.n) : '–'}</b><small>{s ? `${inr(s.value)} · 100%` : ''}</small></div>
+          <div className="sd-stat good"><span>Confirmed</span><b>{s ? int(s.confirmed) : '–'}{s && <em className="pc"> {share(s.confirmed, s.n)}</em>}</b><small>{s ? `${share(s.confirmed, s.n)} of orders${s.avgConfirm != null ? ` · avg ${s.avgConfirm} h to confirm` : ''}` : ''}</small></div>
+          <div className="sd-stat bad"><span>Cancelled</span><b>{s ? int(s.cancelled) : '–'}{s && <em className="pc"> {share(s.cancelled, s.n)}</em>}</b><small>{s ? `${share(s.cancelled, s.n)} of orders` : ''}</small></div>
+          <div className="sd-stat violet"><span>Handed to courier</span><b>{s ? int(s.handed) : '–'}{s && <em className="pc"> {share(s.handed, s.n)}</em>}</b><small>{s ? `${share(s.handed, s.n)} of orders${s.avgOrderHand != null ? ` · avg ${s.avgOrderHand} h order to handover` : ''}` : ''}</small></div>
+          <div className="sd-stat warn"><span>Overdue now</span><b>{s ? int(s.overdue) : '–'}{s && <em className="pc"> {share(s.overdue, s.n)}</em>}</b><small>{s ? `${share(s.overdue, s.n)} of orders · ${int(s.late)} with a late step` : ''}</small></div>
         </div>
         <div className="sd-chips" role="tablist" aria-label="Status">
           {CHIPS.map(([k, l]) => <button key={k} role="tab" aria-selected={stage === k} className={`${k} ${stage === k ? 'on' : ''}`} onClick={() => setStage(k)}>{l}{data && <b>{int(k === '' ? data.total : data.chips[k] || 0)}</b>}</button>)}

@@ -37,6 +37,8 @@ function computeBlock(orders) {
     dispatched: b.dispatched,
     confirmation: pct(b.confirmedYes, decided),
     cancellation: pct(b.cancel, decided),
+    confirmedOfAll: pct(b.confirmedYes, b.total), // same base as the Order funnel's Confirmed %: pending orders count in the base
+    cancelledOfAll: pct(b.cancel, b.total),
     dispatch: pct(b.dispatchedConfirmed, b.confirmedYes),
     ndr: pct(b.ndr, b.dispatched),
     ndrToRto: pct(b.ndrRto, b.ndrClosed),

@@ -8,6 +8,7 @@ const { summarize, DEFAULT_REASON_MAP } = require('../lib/reasons');
 const { RAW_HEADERS } = require('../lib/clean');
 const { fmtDate, fmtDateTime } = require('../lib/istTime');
 const sync = require('../services/sync');
+const { loadUnified, sourceNote } = require('../services/unifiedOrders');
 const shopify = require('../services/shopifySync');
 const shopifyAuth = require('../services/shopifyAuth');
 const shipway = require('../services/shipwaySync');
@@ -102,28 +103,31 @@ router.post('/shipway/sync', shipWrap(async (req, res) => {
   res.status(202).json({ started: true });
 }));
 
+// Overview, Trends, Payment mode and Campaigns read through loadUnified: sheet rows up to the cut-off (21 Oct), the dashboard
+// (Shopify order + team desk + Shipway) from the day after. See lib/unified.js.
 router.get('/metrics', wrap(async (req, res) => {
   const w = winOf(req.query);
-  const [cur, prev, undated] = await Promise.all([
-    validOrders(w),
-    w.prev ? validOrders(w.prev) : null,
+  const [cur, prev, undated, source] = await Promise.all([
+    loadUnified(w),
+    w.prev ? loadUnified(w.prev) : null,
     Order.countDocuments({ excluded: null, orderDate: null }),
+    sourceNote(),
   ]);
-  res.json({ range: rangeOut(w), current: computeMetrics(cur), previous: prev ? computeMetrics(prev) : null, undated });
+  res.json({ range: rangeOut(w), current: computeMetrics(cur), previous: prev ? computeMetrics(prev) : null, undated, source });
 }));
 
 // Trends dashboard: full Overview metrics per day (30 days), week (12 weeks) or month (12 months), independent of the window picker.
 router.get('/trends/overview', wrap(async (req, res) => {
   const gran = ['daily', 'weekly', 'monthly'].includes(req.query.granularity) ? req.query.granularity : 'daily';
   const now = new Date();
-  const orders = await validOrders({ start: overviewStart(gran, now), end: new Date(now.getTime() + 24 * 3600 * 1000) });
-  res.json(computeOverviewTrends(orders, gran, now));
+  const [orders, source] = await Promise.all([loadUnified({ start: overviewStart(gran, now), end: new Date(now.getTime() + 24 * 3600 * 1000) }), sourceNote()]);
+  res.json({ ...computeOverviewTrends(orders, gran, now), source, counted: orders.length });
 }));
 
 router.get('/trends', wrap(async (req, res) => {
   const w = winOf(req.query);
   const gran = ['daily', 'weekly', 'monthly'].includes(req.query.granularity) ? req.query.granularity : 'daily';
-  const orders = await validOrders(w);
+  const orders = await loadUnified(w);
   res.json({ range: rangeOut(w), ...computeTrends(orders, gran, w.start, w.end) });
 }));
 
@@ -131,15 +135,14 @@ router.get('/trends', wrap(async (req, res) => {
 router.get('/campaigns', wrap(async (req, res) => {
   const w = winOf(req.query);
   const by = Object.keys(CAMPAIGN_BY).includes(req.query.by) ? req.query.by : 'campaign';
-  const modeQ = MODES.includes(req.query.mode) ? { paymentMode: req.query.mode } : {};
-  const orders = await validOrders(w, modeQ);
+  const orders = await loadUnified(w, { mode: MODES.includes(req.query.mode) ? req.query.mode : null });
   const ids = orders.map((o) => o.orderId).filter((n) => n != null);
   const sh = await ShopifyOrder.find({ orderId: { $in: ids } }).select('orderId marketing').lean();
   const byId = new Map(sh.filter((s) => s.marketing).map((s) => [s.orderId, s.marketing]));
   const [loaded, shopifyOrders] = await Promise.all([ShopifyOrder.countDocuments({ attrsV: { $gte: 1 } }), ShopifyOrder.estimatedDocumentCount()]);
   const out = computeCampaigns(orders, byId, by);
   const st = await shopify.status();
-  res.json({ range: rangeOut(w), ...out, shopifyOrders, marketingLoaded: loaded, shopifyConfigured: st.configured, shopifyRunning: st.running, shopifyLast: st.last, why: diagnose({ ...out, shopifyOrders, marketingLoaded: loaded }) });
+  res.json({ range: rangeOut(w), ...out, source: await sourceNote(), shopifyOrders, marketingLoaded: loaded, shopifyConfigured: st.configured, shopifyRunning: st.running, shopifyLast: st.last, why: diagnose({ ...out, shopifyOrders, marketingLoaded: loaded }) });
 }));
 
 // ---------- reasons ----------
