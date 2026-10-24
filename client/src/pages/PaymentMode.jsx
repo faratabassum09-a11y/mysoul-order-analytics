@@ -2,15 +2,20 @@ import React from 'react';
 import { Bar, BarChart, CartesianGrid, Legend, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { useApi } from '../api.js';
 import { useFilters } from '../filters.jsx';
-import { FilterBar, Loading } from '../components.jsx';
+import { FilterBar, Loading, SourceNote } from '../components.jsx';
 import { MODES, MODE_COLORS, inr, int, pct, ratioTitle } from '../format.js';
 
 const ROWS = [
   ['Orders', (b) => int(b.total)],
   ['Share of orders', (b) => pct(b.mixCount && b.mixCount.v), (b) => ratioTitle(b.mixCount)],
   ['Share of order value', (b) => pct(b.mixValue && b.mixValue.v), (b) => ratioTitle(b.mixValue)],
-  ['Confirmation', (b) => pct(b.confirmation.v), (b) => ratioTitle(b.confirmation)],
-  ['Cancellation', (b) => pct(b.cancellation.v), (b) => ratioTitle(b.cancellation)],
+  ['Confirmed (of all orders)', (b) => `${int(b.confirmedYes)} · ${pct(b.confirmedOfAll.v)}`, (b) => ratioTitle(b.confirmedOfAll)],
+  ['Cancelled (of all orders)', (b) => `${int(b.cancelled)} · ${pct(b.cancelledOfAll.v)}`, (b) => ratioTitle(b.cancelledOfAll)],
+  ['Awaiting a call', (b) => int(b.pending)],
+  ['Confirmation (of decided orders)', (b) => pct(b.confirmation.v), (b) => ratioTitle(b.confirmation)],
+  ['Cancellation (of decided orders)', (b) => pct(b.cancellation.v), (b) => ratioTitle(b.cancellation)],
+  ['Dispatched', (b) => int(b.dispatched)],
+  ['Delivered', (b) => int(b.delivered)],
   ['NDR', (b) => pct(b.ndr.v), (b) => ratioTitle(b.ndr)],
   ['RTO (closed shipments)', (b) => pct(b.rto.v), (b) => ratioTitle(b.rto)],
   ['Shipments closed', (b) => `${int(b.closed)} of ${int(b.shipments)}`],
@@ -43,6 +48,7 @@ export default function PaymentMode() {
         <Loading error={error} loading={loading || !f.ready}>
           {cur && (
             <>
+              <SourceNote source={data.source} range={data.range} />
               {(cg != null || rg != null) && (
                 <div className="banner">
                   {cg != null && <>Confirmation is <b>{Math.abs(cg).toFixed(1)} pp {cg >= 0 ? 'higher' : 'lower'}</b> on COD than on Prepaid. </>}

@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api, useApi } from '../../api.js';
 import { Loading } from '../../components.jsx';
+import { int } from '../../format.js';
 import { useToast } from '../../deskUi.jsx';
 import { useAutoRefresh } from '../../flowUi.js';
 import { can, useStaff } from '../../staff.jsx';
@@ -37,6 +38,7 @@ function CallBoard({ kind }) {
     if (first) return h === 0 ? 'Due as soon as it moves here' : `Due ${h} h after it moved here`;
     return h === 0 ? 'Due right after a no-answer' : `Due ${h} h after a no-answer`;
   };
+  const share = (n, d) => (d > 0 ? `${Math.round((n / d) * 1000) / 10}%` : '0%'); // share of everything waiting in this queue
   const hint = (i) => (i < 2 ? `Call the customer, then press ${L('btnUpdate')}.` : kind === 'confirm' ? `A ${L('actDnp')} here moves the order to ${L('tabPending')}.` : `A ${L('actDnp')} here cancels the order automatically.`);
   const modeOf = (i) => (data && data.assign ? data.assign.modes[`${kind}${i + 1}`] : 'off');
   const anyAssign = data && Object.values(data.assign.modes).some((m) => m !== 'off');
@@ -59,6 +61,13 @@ function CallBoard({ kind }) {
         <p className="sd-hint">{kind === 'confirm' ? `New Shopify orders land in ${fu('FU1')}. ${L('actDnp')} moves an order to the next column; each column has its own timing.` : `Orders land here after three unanswered confirm calls. Each follow-up is counted in hours from the previous no-answer.`}</p>
         {isAdmin && <Link className="btn ghost" to="/shopify-desk/settings#followups">⚙ Follow-up settings</Link>}
       </div>
+      {counts && (
+        <div className="sd-stats cq-stats" aria-label="Queue counts">
+          <div className="sd-stat"><span>{kind === 'confirm' ? 'In confirm queue' : 'In pending'}</span><b>{int(counts.total)}</b><small>100% of the queue</small></div>
+          <div className={`sd-stat ${counts.due ? 'warn' : ''}`}><span>Due now</span><b>{int(counts.due)}<em className="pc"> {share(counts.due, counts.total)}</em></b><small>{share(counts.due, counts.total)} of the queue is waiting for a call</small></div>
+          {names.map((canon, i) => <div key={canon} className="sd-stat"><span>{fu(canon)}</span><b>{int(counts.fu[i])}<em className="pc"> {share(counts.fu[i], counts.total)}</em></b><small>{share(counts.fu[i], counts.total)} of the queue{counts.dueFu[i] ? ` · ${counts.dueFu[i]} due now` : ''}</small></div>)}
+        </div>
+      )}
       <div className="filters">
         <input type="search" placeholder="Search order number, name or phone" value={q} onChange={(e) => setQ(e.target.value)} aria-label="Search" />
         <WhoFilter value={who} onChange={setWho} people={isAdmin ? people : []} show={!!anyAssign || !!who} />
@@ -83,7 +92,7 @@ function CallBoard({ kind }) {
               return (
                 <div key={canon} className={`dq-col ${kind === 'confirm' ? `fu${i + 1}` : 'pend'}`}>
                   <div className="dq-colhead">
-                    <div className="dq-title"><h2>{fu(canon)}</h2><span className={`sd-count ${due ? 'hot' : ''}`} title={due ? `${due} due now` : ''}>{counts ? counts.fu[i] : items.length}</span>
+                    <div className="dq-title"><h2>{fu(canon)}</h2><span className={`sd-count ${due ? 'hot' : ''}`} title={due ? `${due} due now` : ''}>{counts ? counts.fu[i] : items.length}</span>{counts && <span className="pc-chip" title="Share of the whole queue">{share(counts.fu[i], counts.total)}</span>}
                       {isAdmin && <Link className="dq-gear" to="/shopify-desk/settings#followups" title={`${fu(canon)} settings`} aria-label={`${fu(canon)} settings`}>⚙</Link>}</div>
                     <span className="dq-when">{when(i)}</span>
                     <small>{hint(i)}</small>

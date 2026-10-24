@@ -123,3 +123,20 @@ export function ModeTabs({ value, onChange, withAll = true }) {
 
 export const statusClass = (s) => (s || '').split(' ')[0];
 export const StatusTag = ({ s }) => <span className={`tag ${statusClass(s)}`}>{s}</span>;
+
+// Says where a page's numbers come from: the sheet up to its last day, the dashboard (Shopify + team desk + Shipway) after it.
+// Shown only when the selected window touches the dashboard period or the sheet period, so the reader knows which rule applies.
+export function SourceNote({ source, range }) {
+  if (!source) return null;
+  const end = range && range.end; const start = range && range.start;
+  const usesDash = !end || end >= source.dashboardFrom; const usesSheet = !start || start <= source.sheetUntil;
+  if (!usesDash && !usesSheet) return null;
+  const nice = (d) => new Date(`${d}T00:00:00Z`).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', timeZone: 'UTC' });
+  return (
+    <div className="banner" style={{ marginBottom: 12 }}>
+      {usesDash && usesSheet && <>Orders up to <b>{nice(source.sheetUntil)}</b> are counted from the order sheet; from <b>{nice(source.dashboardFrom)}</b> they come from the dashboard (Shopify order, team confirmation and dispatch, Shipway delivery).</>}
+      {usesDash && !usesSheet && <>Counted from the dashboard: the Shopify order, what the team did in the Shopify desk, and Shipway delivery status.</>}
+      {!usesDash && usesSheet && <>Counted from the order sheet (the dashboard takes over from {nice(source.dashboardFrom)}).</>}
+    </div>
+  );
+}

@@ -1,7 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import { Area, Bar, CartesianGrid, ComposedChart, Legend, Line, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { useApi } from '../api.js';
-import { Funnel, Loading, ModeTabs } from '../components.jsx';
+import { Funnel, Loading, ModeTabs, SourceNote } from '../components.jsx';
 import { KPIS, MODES, MODE_COLORS, delta, fmtValue, inr, int, pct } from '../format.js';
 
 const VIEWS = {
@@ -203,6 +203,7 @@ export default function Trends() {
         <h1>Trends</h1>
         <p className="lede">The Overview numbers, broken out {gran === 'daily' ? 'day by day' : gran === 'weekly' ? 'week by week (Mon–Sun)' : 'month by month'}. Pick a payment mode above to see only that mode. Every number is counted by order date; hover any chart point or percentage to see the count behind it.</p>
         <Loading error={error} loading={loading}>
+          {data && <SourceNote source={data.source} range={{ start: data.start, end: null }} />}
           {empty && <div className="banner">No dated orders in this period yet.</div>}
           {m && !empty && (
             <>

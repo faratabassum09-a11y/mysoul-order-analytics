@@ -219,3 +219,7 @@ Then **In-transit orders** lists everything handed over, with the Shipway status
 
 ## Team performance: task scorecard
 Each follow-up call (FU1–3, Day 1–3) and dispatch step (slip, packed, handover) has a deadline. For the chosen period the tab shows tasks due, done on time (before the task turns overdue; calls get 2 h grace), done late, missed, and a score per person: (on time + half of late) ÷ due × 100. 90+ Excellent, 75–89 Good, 50–74 Needs improvement, below 50 Poor.
+
+## Analytics pages: sheet until 21 Oct, dashboard after
+
+Overview, Trends, Payment mode and Campaigns read through `server/src/services/unifiedOrders.js`. Orders up to 21 Oct 2026 (IST) come from the Google Sheet. Orders from 22 Oct come from the dashboard: Shopify order, Shopify desk status and Shipway, using the Order funnel rules. Move the cut-off with `SHEET_UNTIL=YYYY-MM-DD` on the server. The old sheet-based Orders, Confirm queue and Dispatch desk are removed from the menu.

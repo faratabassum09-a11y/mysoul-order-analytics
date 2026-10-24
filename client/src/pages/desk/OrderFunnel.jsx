@@ -8,7 +8,7 @@ import { Empty } from './shared.jsx';
 import { FUNNEL_TILES } from './DeskOverview.jsx';
 
 // The six ranges the team asked for, then a date selector for anything else.
-const RANGES = [['last_week', 'Last week'], ['this_month', 'This month'], ['last_month', 'Last month'], ['last_quarter', 'Last quarter'], ['last_6_months', 'Last 6 months'], ['this_year', 'This year'], ['custom', 'Pick dates']];
+const RANGES = [['this_week', 'This week'], ['last_week', 'Last week'], ['this_month', 'This month'], ['last_month', 'Last month'], ['last_quarter', 'Last quarter'], ['last_6_months', 'Last 6 months'], ['this_year', 'This year'], ['custom', 'Pick dates']];
 // [key, name, colour]
 const CATS = [['orders', 'New orders', '#1c2431'], ['cod', 'COD orders', '#c4661f'], ['confirmed', 'Confirmed', '#1c7c6c'], ['partial', 'Partial paid', '#6a55b3'], ['dispatched', 'Dispatched', '#3b4a96'], ['delivered', 'Delivered', '#2a7f8e'], ['rto', 'RTO', '#b3261e']];
 const saved = () => { try { return JSON.parse(localStorage.getItem('funnelRange')) || {}; } catch { return {}; } };

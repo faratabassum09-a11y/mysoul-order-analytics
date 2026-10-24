@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { useApi } from '../api.js';
 import { useFilters } from '../filters.jsx';
-import { FilterBar, Loading } from '../components.jsx';
+import { FilterBar, Loading, SourceNote } from '../components.jsx';
 import { MODES, inr, int, pct, ratioTitle } from '../format.js';
 
 const GROUPS = [
@@ -42,6 +42,7 @@ export default function Campaigns() {
         <Loading error={error} loading={loading || !f.ready}>
           {data && (
             <>
+              <SourceNote source={data.source} range={data.range} />
               {data.why && <div className="banner warn"><b>No UTM data found.</b> {WHY[data.why]}{data.shopifyRunning && <> A Shopify sync is running right now, so check again in a few minutes.</>}
                 <div className="muted" style={{ marginTop: 6, fontSize: 12 }}>{int(data.total)} orders in this window · {int(data.matched)} found in Shopify · {int(data.shopifyOrders)} Shopify orders stored · {int(data.marketingLoaded)} of them with UTM fields loaded{data.shopifyLast ? ` · last Shopify sync ${data.shopifyLast.ok ? 'ok' : 'failed'}${data.shopifyLast.error ? `: ${data.shopifyLast.error}` : ''}` : ''}</div></div>}
               {!data.why && data.total > 0 && (
@@ -56,7 +57,7 @@ export default function Campaigns() {
                       <tr>
                         <th>{GROUPS.find((g) => g[0] === by)[1]}</th>
                         <th className="num">Orders</th><th className="num">Share</th><th className="num">COD</th>
-                        <th className="num">Order value</th><th className="num">Confirmed</th><th className="num">Cancelled</th>
+                        <th className="num">Order value</th><th className="num">Awaiting call</th><th className="num">Confirmed</th><th className="num">Cancelled</th>
                         <th className="num">RTO</th><th className="num">Delivered</th><th className="num">Net delivered</th>
                       </tr>
                     </thead>
@@ -71,24 +72,25 @@ export default function Campaigns() {
                           <td className="num">{pct(r.share, 0)}</td>
                           <td className="num" title={`${int(r.cod)} COD · ${int(r.prepaid)} prepaid`}>{pct(r.codShare, 0)}</td>
                           <td className="num">{inr(r.value)}</td>
-                          <td className="num" title={ratioTitle(r.confirmation)}>{pct(r.confirmation.v)}</td>
-                          <td className="num" title={ratioTitle(r.cancellation)}>{pct(r.cancellation.v)}</td>
-                          <td className="num" title={`${ratioTitle(r.rto)} closed shipments · ${int(r.inTransit)} still in transit`}>{pct(r.rto.v)}</td>
+                          <td className="num" title="Orders nobody has confirmed or cancelled yet">{int(r.pending)}</td>
+                          <td className="num" title={`${ratioTitle(r.confirmedOfAll)} orders confirmed · ${pct(r.confirmation.v)} of the orders decided so far`}>{int(r.confirmedYes)} <span className="muted">({pct(r.confirmedOfAll.v, 0)})</span></td>
+                          <td className="num" title={`${ratioTitle(r.cancelledOfAll)} orders cancelled`}>{int(r.cancelled)} <span className="muted">({pct(r.cancelledOfAll.v, 0)})</span></td>
+                          <td className="num" title={`${int(r.rtoCount)} returned of ${int(r.closed)} closed shipments · ${int(r.inTransit)} still in transit`}>{int(r.rtoCount)} <span className="muted">({pct(r.rto.v, 0)})</span></td>
                           <td className="num" title={ratioTitle(r.deliveredRate)}>{int(r.delivered)}</td>
                           <td className="num">{inr(r.netRevenue)}</td>
                         </tr>
                       ))}
                       <tr>
                         <td><b>All orders</b></td><td className="num"><b>{int(t.orders)}</b></td><td className="num">100%</td><td className="num" />
-                        <td className="num"><b>{inr(t.value)}</b></td><td className="num"><b>{pct(t.confirmation.v)}</b></td><td className="num"><b>{pct(t.cancellation.v)}</b></td>
-                        <td className="num"><b>{pct(t.rto.v)}</b></td><td className="num"><b>{int(t.delivered)}</b></td><td className="num"><b>{inr(t.netRevenue)}</b></td>
+                        <td className="num"><b>{inr(t.value)}</b></td><td className="num"><b>{int(t.pending)}</b></td><td className="num"><b>{int(t.confirmedYes)}</b> <span className="muted">({pct(t.confirmedOfAll.v, 0)})</span></td><td className="num"><b>{int(t.cancelled)}</b> <span className="muted">({pct(t.cancelledOfAll.v, 0)})</span></td>
+                        <td className="num"><b>{int(t.rtoCount)}</b> <span className="muted">({pct(t.rto.v, 0)})</span></td><td className="num"><b>{int(t.delivered)}</b></td><td className="num"><b>{inr(t.netRevenue)}</b></td>
                       </tr>
                     </tbody>
                   </table>
                 </div>
               )}
               <p className="muted" style={{ marginTop: 10 }}>
-                RTO is returned ÷ (delivered + returned) and only counts shipments that have closed, so recent campaigns look better than they will end up. Hover a number for the counts behind it.
+                Confirmed and Cancelled are counts, with the share of all orders of that row in brackets (the same base as the Order funnel). RTO % is returned ÷ (delivered + returned) and only counts shipments that have closed, so recent campaigns look better than they will end up. Net delivered is the value of delivered orders only. Hover a number for the counts behind it.
                 {hidden > 0 && ` ${hidden} row${hidden > 1 ? 's' : ''} with fewer orders hidden.`}
               </p>
             </>
